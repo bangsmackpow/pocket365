@@ -250,6 +250,12 @@ export const POCKET365_GRAPH_PERMISSIONS: GraphPermissionRequirement[] = [
     purpose: 'Troubleshoot Entra sign-in logs (7 days on Entra Free; 30 days on P1/P2) and directory audit logs.',
   },
   {
+    permission: 'UserAuthenticationMethod.ReadWrite.All',
+    module: 'MFA & User Security',
+    access: 'write',
+    purpose: 'Inspect/delete user MFA methods, issue Temporary Access Passes (TAP), and run tenant MFA coverage reports.',
+  },
+  {
     permission: 'Directory.Read.All',
     module: 'Directory & RBAC',
     access: 'read',

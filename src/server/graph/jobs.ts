@@ -11,6 +11,7 @@ export type JobType =
   | 'user.bulk_assign_license'
   | 'group.bulk_add_members'
   | 'group.bulk_remove_members'
+  | 'user.offboard'
 
 export interface BulkToggleUsersPayload {
   userIds: string[]
@@ -28,10 +29,50 @@ export interface BulkGroupMembersPayload {
   userIds: string[]
 }
 
+export interface UserOffboardPayload {
+  userId: string
+  userPrincipalName: string
+  mode: 'emergency_lockout' | 'full_offboard'
+  disableAccount: boolean
+  revokeSessions: boolean
+  scramblePassword: boolean
+  removeAllLicenses: boolean
+  removeFromGroups: boolean
+  clearManager: boolean
+}
+
 export type JobPayload =
   | BulkToggleUsersPayload
   | BulkAssignLicensePayload
   | BulkGroupMembersPayload
+  | UserOffboardPayload
+
+export function generateStrongPassword(length = 24): string {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+  const lower = 'abcdefghijkmnopqrstuvwxyz'
+  const digits = '23456789'
+  const symbols = '!@#$%^&*-_=+'
+  const all = upper + lower + digits + symbols
+
+  const pick = (charset: string) => {
+    const idx = crypto.randomInt(0, charset.length)
+    return charset[idx]!
+  }
+
+  const chars = [pick(upper), pick(lower), pick(digits), pick(symbols)]
+  while (chars.length < Math.max(length, 16)) {
+    chars.push(pick(all))
+  }
+
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i + 1)
+    const tmp = chars[i]!
+    chars[i] = chars[j]!
+    chars[j] = tmp
+  }
+
+  return chars.join('')
+}
 
 export interface JobActor {
   oid: string
@@ -241,6 +282,91 @@ async function executeJob(
           graphClient.removeGroupMember(payload.groupId, userId),
         )
       }
+      break
+    }
+    case 'user.offboard': {
+      const payload = JSON.parse(job.payloadJson) as UserOffboardPayload
+
+      if (payload.disableAccount) {
+        await runItem('disable_account', () =>
+          graphClient.setUserAccountEnabled(payload.userId, false),
+        )
+      }
+
+      if (payload.revokeSessions) {
+        await runItem('revoke_sessions', async () => {
+          await graphClient.revokeUserSignInSessions(payload.userId)
+        })
+      }
+
+      if (payload.scramblePassword) {
+        await runItem('scramble_password', () =>
+          graphClient.resetUserPassword(
+            payload.userId,
+            generateStrongPassword(24),
+            true,
+          ),
+        )
+      }
+
+      if (payload.removeAllLicenses) {
+        await runItem('remove_all_licenses', async () => {
+          const user = await graphClient.getUser(payload.userId)
+          const skuIds = user.assignedLicenses.map((l) => l.skuId)
+          if (skuIds.length > 0) {
+            await graphClient.assignUserLicenses(payload.userId, [], skuIds)
+          }
+        })
+      }
+
+      if (payload.removeFromGroups) {
+        let memberships: Awaited<
+          ReturnType<MicrosoftGraphClient['listUserDirectMemberships']>
+        > = []
+        try {
+          memberships = await graphClient.listUserDirectMemberships(
+            payload.userId,
+          )
+        } catch (err) {
+          items.push({
+            targetId: 'list_group_memberships',
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+
+        const assignableGroups = memberships.filter(
+          (m) =>
+            m['@odata.type'] === '#microsoft.graph.group' &&
+            !(m.groupTypes ?? []).includes('DynamicMembership'),
+        )
+
+        if (assignableGroups.length === 0) {
+          items.push({ targetId: 'remove_groups:none_assigned', ok: true })
+        } else {
+          for (const grp of assignableGroups) {
+            await runItem(
+              `remove_group:${grp.displayName || grp.id}`,
+              () => graphClient.removeGroupMember(grp.id, payload.userId),
+            )
+          }
+        }
+      }
+
+      if (payload.clearManager) {
+        await runItem('clear_manager', async () => {
+          try {
+            await graphClient.clearUserManager(payload.userId)
+          } catch (err) {
+            // 404 means no manager was assigned — treat as clean no-op
+            if (err instanceof Error && /404|not found|Resource 'manager' does not exist/i.test(err.message)) {
+              return
+            }
+            throw err
+          }
+        })
+      }
+
       break
     }
     default:

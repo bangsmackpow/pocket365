@@ -3,8 +3,12 @@ import { createFileRoute, Link, redirect } from '@tanstack/react-router'
 import {
   CheckCircle2,
   KeyRound,
+  Lock,
+  LogOut,
   RefreshCw,
   Search,
+  ShieldAlert,
+  Trash2,
   UserCheck,
   UserX,
   XCircle,
@@ -19,6 +23,14 @@ import {
   updateUserLicensesFn,
 } from '~/server/functions/users'
 import { getUserSignInsFn } from '~/server/functions/signins'
+import {
+  createTemporaryAccessPassFn,
+  deleteUserAuthMethodFn,
+  enqueueUserOffboardingFn,
+  getUserAuthMethodsFn,
+  resetUserPasswordFn,
+  revokeUserSessionsFn,
+} from '~/server/functions/security'
 
 export const Route = createFileRoute('/users')({
   beforeLoad: ({ context, location }) => {
@@ -44,8 +56,23 @@ function UsersPage() {
   const [appliedSearch, setAppliedSearch] = useState('')
   const [nextLink, setNextLink] = useState<string | undefined>(undefined)
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
+  const [inspectorTab, setInspectorTab] = useState<
+    'overview' | 'security' | 'offboard'
+  >('overview')
   const [checkedIds, setCheckedIds] = useState<string[]>([])
   const [bulkSkuId, setBulkSkuId] = useState('')
+  const [oneTimeSecret, setOneTimeSecret] = useState<{
+    label: string
+    value: string
+  } | null>(null)
+  const [offboardOpts, setOffboardOpts] = useState({
+    disableAccount: true,
+    revokeSessions: true,
+    scramblePassword: true,
+    removeAllLicenses: true,
+    removeFromGroups: true,
+    clearManager: true,
+  })
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'error'
     text: string
@@ -73,6 +100,150 @@ function UsersPage() {
     enabled: Boolean(selectedUserId),
     queryFn: () =>
       getUserSignInsFn({ data: { userIdOrUpn: selectedUserId!, top: 6 } }),
+  })
+
+  const authMethodsQuery = useQuery({
+    queryKey: ['user-auth-methods', selectedUserId],
+    enabled: Boolean(selectedUserId) && inspectorTab === 'security',
+    queryFn: () => getUserAuthMethodsFn({ data: { userId: selectedUserId! } }),
+  })
+
+  const revokeSessionsMutation = useMutation({
+    mutationFn: (vars: { userId: string; userPrincipalName: string }) =>
+      revokeUserSessionsFn({ data: vars }),
+    onSuccess: (_res, vars) => {
+      setFeedback({
+        type: 'success',
+        text: `Revoked all active sign-in sessions for ${vars.userPrincipalName}.`,
+      })
+    },
+    onError: (err) => {
+      setFeedback({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Failed to revoke sessions.',
+      })
+    },
+  })
+
+  const resetPasswordMutation = useMutation({
+    mutationFn: (vars: { userId: string; userPrincipalName: string }) =>
+      resetUserPasswordFn({
+        data: {
+          userId: vars.userId,
+          userPrincipalName: vars.userPrincipalName,
+          forceChangePasswordNextSignIn: true,
+        },
+      }),
+    onSuccess: (res, vars) => {
+      setOneTimeSecret({
+        label: `Temporary Password for ${vars.userPrincipalName} (must change at next sign-in)`,
+        value: res.temporaryPassword,
+      })
+      setFeedback({
+        type: 'success',
+        text: `Password reset for ${vars.userPrincipalName}.`,
+      })
+    },
+    onError: (err) => {
+      setFeedback({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Failed to reset password.',
+      })
+    },
+  })
+
+  const createTapMutation = useMutation({
+    mutationFn: (vars: { userId: string; userPrincipalName: string }) =>
+      createTemporaryAccessPassFn({
+        data: {
+          userId: vars.userId,
+          userPrincipalName: vars.userPrincipalName,
+          lifetimeInMinutes: 60,
+          isUsableOnce: true,
+        },
+      }),
+    onSuccess: (res, vars) => {
+      if (res.temporaryAccessPass) {
+        setOneTimeSecret({
+          label: `Temporary Access Pass for ${vars.userPrincipalName} (60 min, single-use)`,
+          value: res.temporaryAccessPass,
+        })
+      }
+      setFeedback({
+        type: 'success',
+        text: `Created Temporary Access Pass for ${vars.userPrincipalName}.`,
+      })
+      queryClient.invalidateQueries({
+        queryKey: ['user-auth-methods', vars.userId],
+      })
+    },
+    onError: (err) => {
+      setFeedback({
+        type: 'error',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Failed to create Temporary Access Pass.',
+      })
+    },
+  })
+
+  const deleteAuthMethodMutation = useMutation({
+    mutationFn: (vars: {
+      userId: string
+      userPrincipalName: string
+      methodId: string
+      odataType: string
+      methodLabel: string
+    }) => deleteUserAuthMethodFn({ data: vars }),
+    onSuccess: (_res, vars) => {
+      setFeedback({
+        type: 'success',
+        text: `Removed ${vars.methodLabel} for ${vars.userPrincipalName}.`,
+      })
+      queryClient.invalidateQueries({
+        queryKey: ['user-auth-methods', vars.userId],
+      })
+    },
+    onError: (err) => {
+      setFeedback({
+        type: 'error',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Failed to delete authentication method.',
+      })
+    },
+  })
+
+  const offboardMutation = useMutation({
+    mutationFn: (vars: {
+      userId: string
+      userPrincipalName: string
+      mode: 'emergency_lockout' | 'full_offboard'
+      disableAccount: boolean
+      revokeSessions: boolean
+      scramblePassword: boolean
+      removeAllLicenses: boolean
+      removeFromGroups: boolean
+      clearManager: boolean
+    }) => enqueueUserOffboardingFn({ data: vars }),
+    onSuccess: (res, vars) => {
+      setFeedback({
+        type: 'success',
+        text: `Queued ${vars.mode.replace('_', ' ')} job ${res.job.id} for ${vars.userPrincipalName}. Track step-by-step progress in Audit & Jobs.`,
+      })
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (err) => {
+      setFeedback({
+        type: 'error',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Failed to queue offboarding job.',
+      })
+    },
   })
 
   const toggleMutation = useMutation({
@@ -481,7 +652,271 @@ function UsersPage() {
                     </p>
                   </div>
 
-                  <dl className="grid grid-cols-2 gap-3 text-xs border-t border-slate-100 pt-4">
+                  {/* Inspector Sub-Tabs */}
+                  <div className="flex border-b border-slate-200 gap-3 text-xs">
+                    {(
+                      [
+                        ['overview', 'Overview'],
+                        ['security', 'Security & MFA'],
+                        ['offboard', 'Offboard / Lockout'],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setInspectorTab(key)}
+                        className={`pb-2 font-medium border-b-2 cursor-pointer transition-colors ${
+                          inspectorTab === key
+                            ? 'border-indigo-600 text-indigo-600'
+                            : 'border-transparent text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {oneTimeSecret && (
+                    <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-3 text-xs space-y-1">
+                      <div className="font-semibold text-indigo-950">
+                        {oneTimeSecret.label}
+                      </div>
+                      <div className="font-mono font-bold text-indigo-900 bg-white border border-indigo-200 rounded px-2 py-1 select-all break-all">
+                        {oneTimeSecret.value}
+                      </div>
+                      <div className="flex justify-between items-center text-[11px] text-indigo-700 pt-0.5">
+                        <span>Shown once; never stored in logs.</span>
+                        <button
+                          type="button"
+                          onClick={() => setOneTimeSecret(null)}
+                          className="underline cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {inspectorTab === 'security' ? (
+                    <div className="space-y-4">
+                      {isAdmin && (
+                        <div className="grid grid-cols-1 gap-2">
+                          <button
+                            type="button"
+                            disabled={revokeSessionsMutation.isPending}
+                            onClick={() =>
+                              revokeSessionsMutation.mutate({
+                                userId: user.id,
+                                userPrincipalName: user.userPrincipalName,
+                              })
+                            }
+                            className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50 cursor-pointer"
+                          >
+                            <LogOut className="h-3.5 w-3.5" />
+                            Revoke All Sign-in Sessions
+                          </button>
+                          <button
+                            type="button"
+                            disabled={resetPasswordMutation.isPending}
+                            onClick={() =>
+                              resetPasswordMutation.mutate({
+                                userId: user.id,
+                                userPrincipalName: user.userPrincipalName,
+                              })
+                            }
+                            className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-900 text-white disabled:opacity-50 cursor-pointer"
+                          >
+                            <Lock className="h-3.5 w-3.5" />
+                            Generate Strong Temporary Password
+                          </button>
+                          <button
+                            type="button"
+                            disabled={createTapMutation.isPending}
+                            onClick={() =>
+                              createTapMutation.mutate({
+                                userId: user.id,
+                                userPrincipalName: user.userPrincipalName,
+                              })
+                            }
+                            className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 cursor-pointer"
+                          >
+                            <KeyRound className="h-3.5 w-3.5" />
+                            Issue Temporary Access Pass (60m)
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="space-y-2 border-t border-slate-100 pt-3">
+                        <div className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                          <ShieldAlert className="h-3.5 w-3.5 text-indigo-600" />
+                          Registered MFA / Auth Methods
+                        </div>
+                        {authMethodsQuery.isLoading ? (
+                          <p className="text-xs text-slate-400">
+                            Loading authentication methods...
+                          </p>
+                        ) : authMethodsQuery.data && !authMethodsQuery.data.ok ? (
+                          <div className="rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-[11px] text-amber-900 space-y-1">
+                            <div className="font-semibold">
+                              {authMethodsQuery.data.error?.title}
+                            </div>
+                            <p>
+                              Grant{' '}
+                              <code className="font-mono">
+                                UserAuthenticationMethod.ReadWrite.All
+                              </code>{' '}
+                              in Entra ID with Admin Consent.
+                            </p>
+                          </div>
+                        ) : (authMethodsQuery.data?.methods.length ?? 0) === 0 ? (
+                          <p className="text-xs text-slate-500">
+                            No authentication methods registered.
+                          </p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {authMethodsQuery.data!.methods.map((m) => (
+                              <div
+                                key={m.id}
+                                className="p-2.5 rounded-lg border border-slate-200 text-xs flex items-center justify-between gap-2"
+                              >
+                                <div className="min-w-0">
+                                  <div className="font-medium text-slate-900 truncate">
+                                    {m.label}
+                                  </div>
+                                  <div className="text-[11px] text-slate-500 truncate">
+                                    {m.detail}
+                                  </div>
+                                </div>
+                                {isAdmin && m.deletable && (
+                                  <button
+                                    type="button"
+                                    title="Remove MFA method"
+                                    disabled={deleteAuthMethodMutation.isPending}
+                                    onClick={() =>
+                                      deleteAuthMethodMutation.mutate({
+                                        userId: user.id,
+                                        userPrincipalName:
+                                          user.userPrincipalName,
+                                        methodId: m.id,
+                                        odataType: m.odataType,
+                                        methodLabel: m.label,
+                                      })
+                                    }
+                                    className="p-1.5 rounded text-rose-600 hover:bg-rose-50 disabled:opacity-40 cursor-pointer shrink-0"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : inspectorTab === 'offboard' ? (
+                    <div className="space-y-4 text-xs">
+                      {!isAdmin ? (
+                        <p className="text-slate-500">
+                          Read-only sessions cannot run offboarding or emergency
+                          lockout workflows.
+                        </p>
+                      ) : (
+                        <>
+                          <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 space-y-2">
+                            <div className="font-semibold text-rose-900">
+                              Emergency Lockout (Compromised Account)
+                            </div>
+                            <p className="text-[11px] text-rose-800">
+                              Immediately queues an async job to disable
+                              sign-in, revoke all refresh tokens/sessions, and
+                              scramble the password while keeping licenses and
+                              groups intact for investigation.
+                            </p>
+                            <button
+                              type="button"
+                              disabled={offboardMutation.isPending}
+                              onClick={() =>
+                                offboardMutation.mutate({
+                                  userId: user.id,
+                                  userPrincipalName: user.userPrincipalName,
+                                  mode: 'emergency_lockout',
+                                  disableAccount: true,
+                                  revokeSessions: true,
+                                  scramblePassword: true,
+                                  removeAllLicenses: false,
+                                  removeFromGroups: false,
+                                  clearManager: false,
+                                })
+                              }
+                              className="w-full px-3 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold disabled:opacity-50 cursor-pointer"
+                            >
+                              Run Emergency Lockout
+                            </button>
+                          </div>
+
+                          <div className="rounded-lg border border-slate-200 p-3 space-y-2.5">
+                            <div className="font-semibold text-slate-900">
+                              Full Offboarding Wizard (Async Job)
+                            </div>
+                            {(
+                              [
+                                ['disableAccount', 'Disable sign-in account'],
+                                ['revokeSessions', 'Revoke all active sessions'],
+                                [
+                                  'scramblePassword',
+                                  'Scramble password (24-char random)',
+                                ],
+                                [
+                                  'removeAllLicenses',
+                                  'Remove all assigned M365 licenses',
+                                ],
+                                [
+                                  'removeFromGroups',
+                                  'Remove from assigned security & M365 groups',
+                                ],
+                                ['clearManager', 'Clear assigned manager'],
+                              ] as const
+                            ).map(([key, label]) => (
+                              <label
+                                key={key}
+                                className="flex items-center gap-2 text-slate-700 cursor-pointer"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={offboardOpts[key]}
+                                  onChange={(e) =>
+                                    setOffboardOpts((prev) => ({
+                                      ...prev,
+                                      [key]: e.target.checked,
+                                    }))
+                                  }
+                                  className="rounded border-slate-300"
+                                />
+                                <span>{label}</span>
+                              </label>
+                            ))}
+                            <button
+                              type="button"
+                              disabled={offboardMutation.isPending}
+                              onClick={() =>
+                                offboardMutation.mutate({
+                                  userId: user.id,
+                                  userPrincipalName: user.userPrincipalName,
+                                  mode: 'full_offboard',
+                                  ...offboardOpts,
+                                })
+                              }
+                              className="w-full mt-1 px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold disabled:opacity-50 cursor-pointer"
+                            >
+                              Launch Full Offboarding Job
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <dl className="grid grid-cols-2 gap-3 text-xs pt-1">
                     <div>
                       <dt className="text-slate-500">Account State</dt>
                       <dd className="font-medium text-slate-900 mt-0.5">
@@ -671,6 +1106,8 @@ function UsersPage() {
                       </div>
                     )}
                   </div>
+                    </>
+                  )}
                 </>
               )
             })()

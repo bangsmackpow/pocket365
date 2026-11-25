@@ -143,6 +143,48 @@ export interface ListSignInLogsParams {
   nextLink?: string
 }
 
+export interface GraphAuthMethod {
+  id: string
+  '@odata.type': string
+  displayName?: string | null
+  phoneNumber?: string | null
+  phoneType?: string | null
+  emailAddress?: string | null
+  model?: string | null
+  deviceTag?: string | null
+  createdDateTime?: string | null
+  startDateTime?: string | null
+  lifetimeInMinutes?: number | null
+  isUsableOnce?: boolean | null
+  temporaryAccessPass?: string | null
+}
+
+export interface GraphUserRegistrationDetail {
+  id: string
+  userPrincipalName: string
+  userDisplayName: string
+  userType?: string | null
+  isAdmin: boolean
+  isSsprRegistered: boolean
+  isSsprEnabled: boolean
+  isSsprCapable: boolean
+  isMfaRegistered: boolean
+  isMfaCapable: boolean
+  isPasswordlessCapable: boolean
+  methodsRegistered: string[]
+  userPreferredMethodForSecondaryAuthentication?: string | null
+  lastUpdatedDateTime?: string | null
+}
+
+export interface GraphDirectoryMembership {
+  id: string
+  '@odata.type'?: string
+  displayName?: string | null
+  groupTypes?: string[]
+  securityEnabled?: boolean
+  mailEnabled?: boolean
+}
+
 export interface GraphPageResult<T> {
   items: T[]
   nextLink: string | null
@@ -196,6 +238,23 @@ export interface GraphClientDependencies {
 
 const defaultSleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+export const AUTH_METHOD_SEGMENTS: Record<string, string> = {
+  '#microsoft.graph.microsoftAuthenticatorAuthenticationMethod':
+    'microsoftAuthenticatorMethods',
+  '#microsoft.graph.phoneAuthenticationMethod': 'phoneMethods',
+  '#microsoft.graph.fido2AuthenticationMethod': 'fido2Methods',
+  '#microsoft.graph.emailAuthenticationMethod': 'emailMethods',
+  '#microsoft.graph.softwareOathAuthenticationMethod': 'softwareOathMethods',
+  '#microsoft.graph.temporaryAccessPassAuthenticationMethod':
+    'temporaryAccessPassMethods',
+  '#microsoft.graph.windowsHelloForBusinessAuthenticationMethod':
+    'windowsHelloForBusinessMethods',
+}
+
+export function resolveAuthMethodSegment(odataType: string): string | null {
+  return AUTH_METHOD_SEGMENTS[odataType] ?? null
+}
 
 export class MicrosoftGraphClient {
   private readonly tokenProvider: GraphTokenProvider
@@ -652,6 +711,124 @@ export class MicrosoftGraphClient {
       `/auditLogs/signIns?${query.toString()}`,
     )
     return res.value ?? []
+  }
+
+  public async revokeUserSignInSessions(userId: string): Promise<boolean> {
+    const res = await this.request<{ value?: boolean }>(
+      `/users/${encodeURIComponent(userId)}/revokeSignInSessions`,
+      { method: 'POST', body: {} },
+    )
+    return Boolean(res?.value ?? true)
+  }
+
+  public async resetUserPassword(
+    userId: string,
+    newPassword: string,
+    forceChangePasswordNextSignIn = true,
+  ): Promise<void> {
+    await this.request<void>(`/users/${encodeURIComponent(userId)}`, {
+      method: 'PATCH',
+      body: {
+        passwordProfile: {
+          password: newPassword,
+          forceChangePasswordNextSignIn,
+        },
+      },
+    })
+  }
+
+  public async listUserAuthenticationMethods(
+    userId: string,
+  ): Promise<GraphAuthMethod[]> {
+    const res = await this.request<{ value: GraphAuthMethod[] }>(
+      `/users/${encodeURIComponent(userId)}/authentication/methods`,
+    )
+    return res.value ?? []
+  }
+
+  public async deleteUserAuthenticationMethod(
+    userId: string,
+    odataType: string,
+    methodId: string,
+  ): Promise<void> {
+    const segment = resolveAuthMethodSegment(odataType)
+    if (!segment) {
+      throw new GraphApiError(
+        400,
+        'UNSUPPORTED_AUTH_METHOD',
+        `Authentication method type "${odataType}" cannot be deleted via Pocket365.`,
+      )
+    }
+    await this.request<void>(
+      `/users/${encodeURIComponent(userId)}/authentication/${segment}/${encodeURIComponent(methodId)}`,
+      { method: 'DELETE' },
+    )
+  }
+
+  public async createTemporaryAccessPass(
+    userId: string,
+    options: { lifetimeInMinutes: number; isUsableOnce: boolean },
+  ): Promise<GraphAuthMethod> {
+    return this.request<GraphAuthMethod>(
+      `/users/${encodeURIComponent(userId)}/authentication/temporaryAccessPassMethods`,
+      {
+        method: 'POST',
+        body: {
+          lifetimeInMinutes: options.lifetimeInMinutes,
+          isUsableOnce: options.isUsableOnce,
+        },
+      },
+    )
+  }
+
+  public async listUserDirectMemberships(
+    userId: string,
+  ): Promise<GraphDirectoryMembership[]> {
+    const res = await this.request<{ value: GraphDirectoryMembership[] }>(
+      `/users/${encodeURIComponent(userId)}/memberOf?$select=id,displayName,groupTypes,securityEnabled,mailEnabled&$top=200`,
+    )
+    return res.value ?? []
+  }
+
+  public async clearUserManager(userId: string): Promise<void> {
+    await this.request<void>(
+      `/users/${encodeURIComponent(userId)}/manager/$ref`,
+      { method: 'DELETE' },
+    )
+  }
+
+  public async listUserRegistrationDetails(params: {
+    top?: number
+    nextLink?: string
+  } = {}): Promise<GraphPageResult<GraphUserRegistrationDetail>> {
+    if (params.nextLink) {
+      if (!params.nextLink.startsWith('https://graph.microsoft.com/')) {
+        throw new GraphApiError(
+          400,
+          'INVALID_NEXT_LINK',
+          'Invalid pagination link.',
+        )
+      }
+      const res = await this.request<{
+        value: GraphUserRegistrationDetail[]
+        '@odata.nextLink'?: string
+      }>(params.nextLink)
+      return {
+        items: res.value ?? [],
+        nextLink: res['@odata.nextLink'] ?? null,
+      }
+    }
+
+    const top = Math.min(Math.max(params.top ?? 200, 1), 999)
+    const res = await this.request<{
+      value: GraphUserRegistrationDetail[]
+      '@odata.nextLink'?: string
+    }>(`/reports/authenticationMethods/userRegistrationDetails?$top=${top}`)
+
+    return {
+      items: res.value ?? [],
+      nextLink: res['@odata.nextLink'] ?? null,
+    }
   }
 }
 

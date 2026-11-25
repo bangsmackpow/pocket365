@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   LogOut,
   Shield,
+  ShieldAlert,
   ShieldCheck,
   Users,
   UsersRound,
@@ -29,6 +30,7 @@ interface AppShellProps {
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/signins', label: 'Sign-in Logs', icon: KeyRound },
+  { to: '/mfa', label: 'MFA Coverage', icon: ShieldAlert },
   { to: '/users', label: 'Users', icon: Users },
   { to: '/groups', label: 'Groups', icon: UsersRound },
   { to: '/audit', label: 'Audit & Jobs', icon: Activity },
