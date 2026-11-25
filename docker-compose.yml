@@ -1,0 +1,65 @@
+# ==============================================================================
+# Pocket365 — Portainer Stack / Docker Compose (behind Nginx Proxy Manager)
+#
+# In Nginx Proxy Manager, create a Proxy Host pointing to:
+#   Scheme: http
+#   Forward Hostname / IP: pocket365
+#   Forward Port: 3000
+#   Enable: Block Common Exploits, Force SSL, HTTP/2 Support
+# ==============================================================================
+
+services:
+  pocket365:
+    image: ghcr.io/bangsmackpow/pocket365:latest
+    container_name: pocket365
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATA_DIR: /data
+
+      # Canonical external HTTPS URL served by Nginx Proxy Manager (no trailing slash)
+      APP_BASE_URL: ${APP_BASE_URL:-https://pocket365.example.com}
+
+      # Single-Tenant Microsoft Entra ID
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+
+      # Session security (generate with: openssl rand -hex 32)
+      SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
+
+      # Role-Based Access Control (comma-separated OIDs, UPNs, or Security Group Object IDs)
+      ADMIN_OIDS_OR_GROUPS: ${ADMIN_OIDS_OR_GROUPS}
+      VIEWER_OIDS_OR_GROUPS: ${VIEWER_OIDS_OR_GROUPS:-}
+
+      # Microsoft Graph App-Only Credentials (Client Secret or X.509 Certificate)
+      GRAPH_CLIENT_ID: ${GRAPH_CLIENT_ID}
+      GRAPH_CLIENT_SECRET: ${GRAPH_CLIENT_SECRET:-}
+      GRAPH_CERT_THUMBPRINT: ${GRAPH_CERT_THUMBPRINT:-}
+      GRAPH_CERT_PRIVATE_KEY: ${GRAPH_CERT_PRIVATE_KEY:-}
+      # GRAPH_CERT_PRIVATE_KEY_PATH: /run/secrets/graph_private_key.pem
+
+    volumes:
+      - pocket365_data:/data
+
+    # Do not expose container port to 0.0.0.0 when proxied by Nginx Proxy Manager.
+    # Uncomment the lines below ONLY if you need direct loopback access on the Docker host:
+    # ports:
+    #   - "127.0.0.1:3000:3000"
+
+    networks:
+      - npm_network
+
+volumes:
+  pocket365_data:
+    name: pocket365_data
+
+networks:
+  # Attach to the existing external Docker network shared with Nginx Proxy Manager
+  # (e.g., npm_network or proxy). Override with PROXY_NETWORK env var if named differently.
+  npm_network:
+    name: ${PROXY_NETWORK:-npm_network}
+    external: true

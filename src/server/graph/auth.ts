@@ -1,0 +1,154 @@
+import crypto from 'node:crypto'
+import { importPKCS8, SignJWT } from 'jose'
+import { getConfig } from '~/server/config'
+
+interface CachedToken {
+  accessToken: string
+  expiresAt: number
+}
+
+const REFRESH_MARGIN_MS = 5 * 60 * 1000 // Refresh 5 minutes before expiry
+
+export function thumbprintHexToX5t(hexThumbprint: string): string {
+  const normalized = hexThumbprint.trim().replace(/[:\s]/g, '')
+  if (!/^[0-9a-fA-F]{40}$/.test(normalized)) {
+    throw new Error(
+      'GRAPH_CERT_THUMBPRINT must be a 40-character hex SHA-1 thumbprint.',
+    )
+  }
+  return Buffer.from(normalized, 'hex').toString('base64url')
+}
+
+export async function createClientAssertionJwt(params: {
+  clientId: string
+  tokenUrl: string
+  thumbprintHex: string
+  privateKeyPem: string
+}): Promise<string> {
+  const x5t = thumbprintHexToX5t(params.thumbprintHex)
+  const key = await importPKCS8(params.privateKeyPem, 'RS256')
+  const nowSeconds = Math.floor(Date.now() / 1000)
+
+  return new SignJWT({})
+    .setProtectedHeader({ alg: 'RS256', typ: 'JWT', x5t })
+    .setIssuer(params.clientId)
+    .setSubject(params.clientId)
+    .setAudience(params.tokenUrl)
+    .setJti(crypto.randomUUID())
+    .setNotBefore(nowSeconds - 10)
+    .setIssuedAt(nowSeconds)
+    .setExpirationTime(nowSeconds + 300)
+    .sign(key)
+}
+
+export class GraphTokenProvider {
+  private cache: CachedToken | null = null
+  private inFlight: Promise<string> | null = null
+  private readonly fetchImpl: typeof fetch
+
+  constructor(fetchImpl: typeof fetch = fetch) {
+    this.fetchImpl = fetchImpl
+  }
+
+  public invalidate(): void {
+    this.cache = null
+  }
+
+  public async getAccessToken(forceRefresh = false): Promise<string> {
+    if (
+      !forceRefresh &&
+      this.cache &&
+      this.cache.expiresAt - REFRESH_MARGIN_MS > Date.now()
+    ) {
+      return this.cache.accessToken
+    }
+
+    if (this.inFlight) {
+      return this.inFlight
+    }
+
+    this.inFlight = this.acquireToken().finally(() => {
+      this.inFlight = null
+    })
+
+    return this.inFlight
+  }
+
+  private async acquireToken(): Promise<string> {
+    const cfg = getConfig()
+    if (!cfg.entraTenantId || !cfg.graphClientId) {
+      throw new Error(
+        'Microsoft Graph app-only authentication is not configured (missing ENTRA_TENANT_ID or GRAPH_CLIENT_ID).',
+      )
+    }
+
+    const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(cfg.entraTenantId)}/oauth2/v2.0/token`
+    const body = new URLSearchParams({
+      client_id: cfg.graphClientId,
+      scope: 'https://graph.microsoft.com/.default',
+      grant_type: 'client_credentials',
+    })
+
+    if (cfg.graphCertThumbprint && cfg.graphCertPrivateKey) {
+      const assertion = await createClientAssertionJwt({
+        clientId: cfg.graphClientId,
+        tokenUrl,
+        thumbprintHex: cfg.graphCertThumbprint,
+        privateKeyPem: cfg.graphCertPrivateKey,
+      })
+      body.set(
+        'client_assertion_type',
+        'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+      )
+      body.set('client_assertion', assertion)
+    } else if (cfg.graphClientSecret) {
+      body.set('client_secret', cfg.graphClientSecret)
+    } else {
+      throw new Error(
+        'Microsoft Graph credentials missing. Configure GRAPH_CLIENT_SECRET or GRAPH_CERT_THUMBPRINT + GRAPH_CERT_PRIVATE_KEY.',
+      )
+    }
+
+    const response = await this.fetchImpl(tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    })
+
+    const data = (await response.json().catch(() => ({}))) as {
+      access_token?: string
+      expires_in?: number
+      error?: string
+      error_description?: string
+    }
+
+    if (!response.ok || !data.access_token) {
+      throw new Error(
+        data.error_description ||
+          data.error ||
+          `Failed to acquire Microsoft Graph token (HTTP ${response.status}).`,
+      )
+    }
+
+    const expiresInSeconds =
+      typeof data.expires_in === 'number' && data.expires_in > 0
+        ? data.expires_in
+        : 3600
+
+    this.cache = {
+      accessToken: data.access_token,
+      expiresAt: Date.now() + expiresInSeconds * 1000,
+    }
+
+    return data.access_token
+  }
+}
+
+let defaultProvider: GraphTokenProvider | null = null
+
+export function getGraphTokenProvider(): GraphTokenProvider {
+  if (!defaultProvider) {
+    defaultProvider = new GraphTokenProvider()
+  }
+  return defaultProvider
+}
