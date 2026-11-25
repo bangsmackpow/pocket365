@@ -256,6 +256,30 @@ export const POCKET365_GRAPH_PERMISSIONS: GraphPermissionRequirement[] = [
     purpose: 'Inspect/delete user MFA methods, issue Temporary Access Passes (TAP), and run tenant MFA coverage reports.',
   },
   {
+    permission: 'RoleManagement.ReadWrite.Directory',
+    module: 'Privileged Roles',
+    access: 'write',
+    purpose: 'Inspect Entra directory role assignments (Global Admin, etc.) and add/remove role members.',
+  },
+  {
+    permission: 'Policy.Read.All',
+    module: 'CIS Benchmarks & Policies',
+    access: 'read',
+    purpose: 'Read tenant authorization policy, Security Defaults, and authentication policies for CIS scoring.',
+  },
+  {
+    permission: 'Policy.ReadWrite.Authorization',
+    module: 'CIS 1-Click Remediations',
+    access: 'write',
+    purpose: 'Apply 1-click CIS fixes (block user app consent/registration, restrict guests, block tenant creation).',
+  },
+  {
+    permission: 'Policy.ReadWrite.SecurityDefaults',
+    module: 'CIS 1-Click Remediations',
+    access: 'write',
+    purpose: 'Enable Microsoft Security Defaults via 1-click CIS remediation (CIS 5.2.2.1).',
+  },
+  {
     permission: 'Directory.Read.All',
     module: 'Directory & RBAC',
     access: 'read',

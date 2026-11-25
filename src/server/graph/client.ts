@@ -185,6 +185,100 @@ export interface GraphDirectoryMembership {
   mailEnabled?: boolean
 }
 
+export interface GraphDirectoryAuditModifiedProperty {
+  displayName: string
+  oldValue: string | null
+  newValue: string | null
+}
+
+export interface GraphDirectoryAuditTarget {
+  id: string | null
+  displayName: string | null
+  type: string | null
+  userPrincipalName: string | null
+  modifiedProperties?: GraphDirectoryAuditModifiedProperty[]
+}
+
+export interface GraphDirectoryAudit {
+  id: string
+  activityDateTime: string
+  activityDisplayName: string
+  category: string
+  loggedByService: string | null
+  operationType: string | null
+  result: string | null
+  resultReason: string | null
+  initiatedBy: {
+    user?: {
+      id?: string
+      displayName?: string
+      userPrincipalName?: string
+      ipAddress?: string
+    } | null
+    app?: {
+      appId?: string
+      displayName?: string
+      servicePrincipalId?: string
+    } | null
+  } | null
+  targetResources: GraphDirectoryAuditTarget[]
+}
+
+export interface GraphDirectoryRoleMember {
+  id: string
+  '@odata.type'?: string
+  displayName?: string | null
+  userPrincipalName?: string | null
+  accountEnabled?: boolean | null
+}
+
+export interface GraphDirectoryRole {
+  id: string
+  displayName: string
+  description: string | null
+  roleTemplateId: string | null
+  members?: GraphDirectoryRoleMember[]
+}
+
+export interface GraphAuthorizationPolicy {
+  id: string
+  displayName?: string
+  allowInvitesFrom?: string
+  guestUserRoleId?: string
+  blockMsolPowerShell?: boolean | null
+  allowEmailVerifiedUsersToJoinOrganization?: boolean
+  defaultUserRolePermissions?: {
+    allowedToCreateApps?: boolean
+    allowedToCreateSecurityGroups?: boolean
+    allowedToCreateTenants?: boolean
+    allowedToReadBitlockerKeysForOwnedDevice?: boolean
+    allowedToReadOtherUsers?: boolean
+    permissionGrantPoliciesAssigned?: string[]
+  }
+}
+
+export interface GraphSecurityDefaultsPolicy {
+  id: string
+  displayName?: string
+  isEnabled: boolean
+}
+
+export interface GraphAdminConsentRequestPolicy {
+  isEnabled: boolean
+  notifyReviewers?: boolean
+  remindersEnabled?: boolean
+  requestDurationInDays?: number
+}
+
+export interface GraphDomain {
+  id: string
+  isDefault: boolean
+  isInitial: boolean
+  isVerified: boolean
+  passwordValidityPeriodInDays: number | null
+  passwordNotificationWindowInDays: number | null
+}
+
 export interface GraphPageResult<T> {
   items: T[]
   nextLink: string | null
@@ -829,6 +923,165 @@ export class MicrosoftGraphClient {
       items: res.value ?? [],
       nextLink: res['@odata.nextLink'] ?? null,
     }
+  }
+
+  public async listDirectoryAudits(params: {
+    category?: string
+    activity?: string
+    daysBack?: number
+    top?: number
+    nextLink?: string
+  } = {}): Promise<GraphPageResult<GraphDirectoryAudit>> {
+    if (params.nextLink) {
+      if (!params.nextLink.startsWith('https://graph.microsoft.com/')) {
+        throw new GraphApiError(
+          400,
+          'INVALID_NEXT_LINK',
+          'Invalid pagination link.',
+        )
+      }
+      const res = await this.request<{
+        value: GraphDirectoryAudit[]
+        '@odata.nextLink'?: string
+      }>(params.nextLink)
+      return {
+        items: res.value ?? [],
+        nextLink: res['@odata.nextLink'] ?? null,
+      }
+    }
+
+    const top = Math.min(Math.max(params.top ?? 50, 1), 200)
+    const filters: string[] = []
+
+    if (params.daysBack && params.daysBack > 0) {
+      const since = new Date(
+        Date.now() - params.daysBack * 24 * 60 * 60 * 1000,
+      ).toISOString()
+      filters.push(`activityDateTime ge ${since}`)
+    }
+    if (params.category && params.category !== 'all') {
+      filters.push(`category eq '${escapeODataString(params.category)}'`)
+    }
+    if (params.activity?.trim()) {
+      filters.push(
+        `startswith(activityDisplayName,'${escapeODataString(params.activity.trim())}')`,
+      )
+    }
+
+    const query = new URLSearchParams({
+      $top: String(top),
+      $orderby: 'activityDateTime desc',
+    })
+    if (filters.length > 0) {
+      query.set('$filter', filters.join(' and '))
+    }
+
+    const res = await this.request<{
+      value: GraphDirectoryAudit[]
+      '@odata.nextLink'?: string
+    }>(`/auditLogs/directoryAudits?${query.toString()}`)
+
+    return {
+      items: res.value ?? [],
+      nextLink: res['@odata.nextLink'] ?? null,
+    }
+  }
+
+  public async listDirectoryRolesWithMembers(): Promise<GraphDirectoryRole[]> {
+    const res = await this.request<{ value: GraphDirectoryRole[] }>(
+      '/directoryRoles?$expand=members($select=id,displayName,userPrincipalName,accountEnabled)',
+    )
+    return res.value ?? []
+  }
+
+  public async addDirectoryRoleMember(
+    roleId: string,
+    userId: string,
+  ): Promise<void> {
+    await this.request<void>(
+      `/directoryRoles/${encodeURIComponent(roleId)}/members/$ref`,
+      {
+        method: 'POST',
+        body: {
+          '@odata.id': `${GRAPH_BASE_URL}/directoryObjects/${encodeURIComponent(userId)}`,
+        },
+      },
+    )
+  }
+
+  public async removeDirectoryRoleMember(
+    roleId: string,
+    memberId: string,
+  ): Promise<void> {
+    await this.request<void>(
+      `/directoryRoles/${encodeURIComponent(roleId)}/members/${encodeURIComponent(memberId)}/$ref`,
+      { method: 'DELETE' },
+    )
+  }
+
+  public async getAuthorizationPolicy(): Promise<GraphAuthorizationPolicy> {
+    return this.request<GraphAuthorizationPolicy>(
+      '/policies/authorizationPolicy',
+    )
+  }
+
+  public async updateAuthorizationPolicy(
+    patch: Partial<GraphAuthorizationPolicy>,
+  ): Promise<void> {
+    await this.request<void>('/policies/authorizationPolicy', {
+      method: 'PATCH',
+      body: patch,
+    })
+  }
+
+  public async getSecurityDefaultsPolicy(): Promise<GraphSecurityDefaultsPolicy> {
+    return this.request<GraphSecurityDefaultsPolicy>(
+      '/policies/identitySecurityDefaultsEnforcementPolicy',
+    )
+  }
+
+  public async setSecurityDefaultsEnabled(isEnabled: boolean): Promise<void> {
+    await this.request<void>(
+      '/policies/identitySecurityDefaultsEnforcementPolicy',
+      {
+        method: 'PATCH',
+        body: { isEnabled },
+      },
+    )
+  }
+
+  public async getAdminConsentRequestPolicy(): Promise<GraphAdminConsentRequestPolicy> {
+    return this.request<GraphAdminConsentRequestPolicy>(
+      '/policies/adminConsentRequestPolicy',
+    )
+  }
+
+  public async setAdminConsentRequestEnabled(
+    isEnabled: boolean,
+  ): Promise<void> {
+    await this.request<void>('/policies/adminConsentRequestPolicy', {
+      method: 'PUT',
+      body: {
+        isEnabled,
+        notifyReviewers: true,
+        remindersEnabled: true,
+        requestDurationInDays: 30,
+      },
+    })
+  }
+
+  public async listDomains(): Promise<GraphDomain[]> {
+    const res = await this.request<{ value: GraphDomain[] }>('/domains')
+    return res.value ?? []
+  }
+
+  public async listConditionalAccessPoliciesSummary(): Promise<
+    Array<{ id: string; displayName: string; state: string }>
+  > {
+    const res = await this.request<{
+      value: Array<{ id: string; displayName: string; state: string }>
+    }>('/identity/conditionalAccess/policies?$select=id,displayName,state&$top=50')
+    return res.value ?? []
   }
 }
 

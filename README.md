@@ -43,6 +43,8 @@ You can use either **one** App Registration for both OIDC login and Graph App-On
    - `Organization.Read.All` *(read tenant summary and `subscribedSkus` license pools)*
    - `AuditLog.Read.All` *(troubleshoot Entra sign-in logs and directory audit logs)*
    - `UserAuthenticationMethod.ReadWrite.All` *(inspect/delete user MFA methods, issue Temporary Access Pass, tenant MFA coverage report)*
+   - `RoleManagement.ReadWrite.Directory` *(Privileged Roles & Admin Monitor + add/remove directory role assignments)*
+   - `Policy.Read.All`, `Policy.ReadWrite.Authorization`, `Policy.ReadWrite.SecurityDefaults`, `Policy.ReadWrite.ConsentRequest` *(CIS Microsoft 365 Benchmarks & 1-click remediations)*
    - `Directory.Read.All` *(fallback group lookup on login and directory metadata)*
 3. Click **Grant admin consent for `<Your Tenant>`** and confirm all permissions show green checkmarks.
 4. Configure credentials using **one** of:

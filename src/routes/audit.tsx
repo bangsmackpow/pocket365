@@ -2,7 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import {
   Activity,
+  AlertTriangle,
   Clock,
+  Download,
+  History,
   RefreshCw,
   RotateCcw,
   Search,
@@ -13,6 +16,7 @@ import {
   listJobsFn,
   retryJobFn,
 } from '~/server/functions/audit'
+import { listDirectoryAuditsFn } from '~/server/functions/governance'
 
 export const Route = createFileRoute('/audit')({
   beforeLoad: ({ context, location }) => {
@@ -34,11 +38,15 @@ function AuditAndJobsPage() {
   const isAdmin = auth.user?.role === 'admin'
   const queryClient = useQueryClient()
 
-  const [tab, setTab] = useState<'audit' | 'jobs'>('audit')
+  const [tab, setTab] = useState<'audit' | 'directory' | 'jobs'>('audit')
   const [auditStatus, setAuditStatus] = useState<
     'all' | 'success' | 'failure' | 'queued'
   >('all')
   const [auditSearch, setAuditSearch] = useState('')
+  const [dirCategory, setDirCategory] = useState('all')
+  const [dirActivity, setDirActivity] = useState('')
+  const [dirDaysBack, setDirDaysBack] = useState(7)
+  const [dirNextLink, setDirNextLink] = useState<string | undefined>(undefined)
   const [jobStatus, setJobStatus] = useState<
     'all' | 'queued' | 'running' | 'completed' | 'failed'
   >('all')
@@ -51,6 +59,21 @@ function AuditAndJobsPage() {
           status: auditStatus,
           search: auditSearch || undefined,
           limit: 150,
+        },
+      }),
+  })
+
+  const directoryAuditsQuery = useQuery({
+    queryKey: ['directory-audits', dirCategory, dirActivity, dirDaysBack, dirNextLink],
+    enabled: tab === 'directory',
+    queryFn: () =>
+      listDirectoryAuditsFn({
+        data: {
+          category: dirCategory,
+          activity: dirActivity.trim() || undefined,
+          daysBack: dirDaysBack,
+          top: 50,
+          nextLink: dirNextLink,
         },
       }),
   })
@@ -97,12 +120,17 @@ function AuditAndJobsPage() {
           onClick={() => {
             auditQuery.refetch()
             jobsQuery.refetch()
+            if (tab === 'directory') directoryAuditsQuery.refetch()
           }}
           className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 cursor-pointer"
         >
           <RefreshCw
             className={`h-4 w-4 ${
-              auditQuery.isFetching || jobsQuery.isFetching ? 'animate-spin' : ''
+              auditQuery.isFetching ||
+              jobsQuery.isFetching ||
+              directoryAuditsQuery.isFetching
+                ? 'animate-spin'
+                : ''
             }`}
           />
           Refresh
@@ -110,7 +138,7 @@ function AuditAndJobsPage() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-slate-200 flex gap-6">
+      <div className="border-b border-slate-200 flex flex-wrap gap-6">
         <button
           type="button"
           onClick={() => setTab('audit')}
@@ -121,7 +149,19 @@ function AuditAndJobsPage() {
           }`}
         >
           <Activity className="h-4 w-4" />
-          Audit Log ({auditQuery.data?.logs.length ?? 0})
+          Pocket365 Audit ({auditQuery.data?.logs.length ?? 0})
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('directory')}
+          className={`pb-3 text-sm font-medium border-b-2 inline-flex items-center gap-2 cursor-pointer transition-colors ${
+            tab === 'directory'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <History className="h-4 w-4" />
+          Entra Directory Audits (Tenant-Wide)
         </button>
         <button
           type="button"
@@ -228,6 +268,214 @@ function AuditAndJobsPage() {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      ) : tab === 'directory' ? (
+        <div className="space-y-4">
+          {directoryAuditsQuery.data &&
+            !directoryAuditsQuery.data.ok &&
+            directoryAuditsQuery.data.error && (
+              <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-xs text-amber-950 flex items-start gap-2.5">
+                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-semibold">
+                    {directoryAuditsQuery.data.error.title}
+                  </div>
+                  <p className="mt-0.5">
+                    {directoryAuditsQuery.data.error.message}
+                  </p>
+                </div>
+              </div>
+            )}
+
+          <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-wrap items-center gap-3 shadow-xs">
+            <div className="relative flex-1 min-w-52">
+              <Search className="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={dirActivity}
+                onChange={(e) => {
+                  setDirNextLink(undefined)
+                  setDirActivity(e.target.value)
+                }}
+                placeholder="Activity prefix (e.g. Add member, Update user, Reset)..."
+                className="w-full pl-9 pr-3 py-2 text-xs border border-slate-300 rounded-lg"
+              />
+            </div>
+            <select
+              value={dirCategory}
+              onChange={(e) => {
+                setDirNextLink(undefined)
+                setDirCategory(e.target.value)
+              }}
+              className="px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white"
+            >
+              <option value="all">All Categories</option>
+              <option value="UserManagement">User Management</option>
+              <option value="GroupManagement">Group Management</option>
+              <option value="RoleManagement">Role Management</option>
+              <option value="ApplicationManagement">Application Management</option>
+              <option value="Policy">Policy Changes</option>
+              <option value="Authorization">Authorization</option>
+            </select>
+            <select
+              value={dirDaysBack}
+              onChange={(e) => {
+                setDirNextLink(undefined)
+                setDirDaysBack(Number(e.target.value))
+              }}
+              className="px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white"
+            >
+              <option value={1}>Last 24h</option>
+              <option value={3}>Last 3 days</option>
+              <option value={7}>Last 7 days (Entra Free)</option>
+              <option value={30}>Last 30 days (P1/P2)</option>
+            </select>
+            <button
+              type="button"
+              disabled={(directoryAuditsQuery.data?.audits.length ?? 0) === 0}
+              onClick={() => {
+                const rows = directoryAuditsQuery.data?.audits ?? []
+                const csv = [
+                  'Timestamp,Category,Activity,InitiatedBy,Target,Result',
+                  ...rows.map((r) => {
+                    const actor =
+                      r.initiatedBy?.user?.userPrincipalName ||
+                      r.initiatedBy?.app?.displayName ||
+                      'System'
+                    const target =
+                      r.targetResources[0]?.userPrincipalName ||
+                      r.targetResources[0]?.displayName ||
+                      ''
+                    return [
+                      r.activityDateTime,
+                      r.category,
+                      r.activityDisplayName,
+                      actor,
+                      target,
+                      r.result || '',
+                    ]
+                      .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+                      .join(',')
+                  }),
+                ].join('\n')
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `pocket365-directory-audits-${new Date().toISOString().slice(0, 10)}.csv`
+                document.body.appendChild(a)
+                a.click()
+                a.remove()
+                URL.revokeObjectURL(url)
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
+            >
+              <Download className="h-3.5 w-3.5" />
+              CSV
+            </button>
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+            {directoryAuditsQuery.isLoading ? (
+              <div className="p-8 text-center text-sm text-slate-500">
+                Querying tenant-wide Entra Directory Audit Logs...
+              </div>
+            ) : (directoryAuditsQuery.data?.audits.length ?? 0) === 0 ? (
+              <div className="p-8 text-center text-sm text-slate-500">
+                No directory audit events match your filter.
+              </div>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-50 uppercase text-slate-500 border-b border-slate-200">
+                      <tr>
+                        <th className="px-4 py-3">Timestamp</th>
+                        <th className="px-4 py-3">Activity & Category</th>
+                        <th className="px-4 py-3">Initiated By</th>
+                        <th className="px-4 py-3">Target & Changes</th>
+                        <th className="px-4 py-3">Result</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {directoryAuditsQuery.data!.audits.map((ev) => {
+                        const actor =
+                          ev.initiatedBy?.user?.userPrincipalName ||
+                          ev.initiatedBy?.app?.displayName ||
+                          'Microsoft / System'
+                        const target = ev.targetResources[0]
+                        const modified = target?.modifiedProperties ?? []
+                        return (
+                          <tr key={ev.id} className="hover:bg-slate-50/70">
+                            <td className="px-4 py-3 whitespace-nowrap text-slate-600">
+                              {new Date(ev.activityDateTime).toLocaleString()}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="font-medium text-slate-900">
+                                {ev.activityDisplayName}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                {ev.category} • {ev.loggedByService || 'Entra'}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-slate-700 break-all max-w-48">
+                              {actor}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="text-slate-900 font-medium">
+                                {target?.userPrincipalName ||
+                                  target?.displayName ||
+                                  target?.id ||
+                                  '—'}
+                              </div>
+                              {modified.length > 0 && (
+                                <details className="mt-1">
+                                  <summary className="cursor-pointer text-indigo-600 font-medium">
+                                    {modified.length} property change(s)
+                                  </summary>
+                                  <div className="mt-1 space-y-1 bg-slate-900 text-slate-100 p-2 rounded text-[11px] max-w-md overflow-x-auto">
+                                    {modified.map((prop, i) => (
+                                      <div key={i}>
+                                        <span className="text-sky-300 font-mono">
+                                          {prop.displayName}
+                                        </span>
+                                        : {prop.oldValue ?? 'null'} &rarr;{' '}
+                                        <span className="text-emerald-300">
+                                          {prop.newValue ?? 'null'}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </details>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              <Pill status={ev.result || 'unknown'} />
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {directoryAuditsQuery.data?.nextLink && (
+                  <div className="px-4 py-3 border-t border-slate-200 bg-slate-50 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDirNextLink(
+                          directoryAuditsQuery.data?.nextLink ?? undefined,
+                        )
+                      }
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white border border-slate-300 hover:bg-slate-100 cursor-pointer"
+                    >
+                      Next Page &rarr;
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       ) : (
