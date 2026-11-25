@@ -18,6 +18,7 @@ import {
   toggleUserAccountFn,
   updateUserLicensesFn,
 } from '~/server/functions/users'
+import { getUserSignInsFn } from '~/server/functions/signins'
 
 export const Route = createFileRoute('/users')({
   beforeLoad: ({ context, location }) => {
@@ -65,6 +66,13 @@ function UsersPage() {
     queryKey: ['user-detail', selectedUserId],
     enabled: Boolean(selectedUserId),
     queryFn: () => getUserDetailFn({ data: { userId: selectedUserId! } }),
+  })
+
+  const userSignInsQuery = useQuery({
+    queryKey: ['user-signins', selectedUserId],
+    enabled: Boolean(selectedUserId),
+    queryFn: () =>
+      getUserSignInsFn({ data: { userIdOrUpn: selectedUserId!, top: 6 } }),
   })
 
   const toggleMutation = useMutation({
@@ -594,6 +602,69 @@ function UsersPage() {
                                   {assigned ? 'Assigned' : 'Not assigned'}
                                 </span>
                               )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Recent Sign-in Activity for this user */}
+                  <div className="border-t border-slate-100 pt-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-slate-700">
+                        Recent Sign-ins
+                      </span>
+                      <Link
+                        to="/signins"
+                        search={{ user: user.userPrincipalName }}
+                        className="text-[11px] font-medium text-indigo-600 hover:text-indigo-700"
+                      >
+                        Troubleshoot all &rarr;
+                      </Link>
+                    </div>
+                    {userSignInsQuery.isLoading ? (
+                      <p className="text-xs text-slate-400">
+                        Loading recent sign-ins...
+                      </p>
+                    ) : userSignInsQuery.data && !userSignInsQuery.data.ok ? (
+                      <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                        {userSignInsQuery.data.error?.title}: grant{' '}
+                        <code className="font-mono">AuditLog.Read.All</code> to
+                        view sign-in logs.
+                      </p>
+                    ) : (userSignInsQuery.data?.signIns.length ?? 0) === 0 ? (
+                      <p className="text-xs text-slate-500">
+                        No recent sign-in logs found in retention window.
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {userSignInsQuery.data!.signIns.map((s) => {
+                          const ok = (s.status?.errorCode ?? 0) === 0
+                          return (
+                            <div
+                              key={s.id}
+                              className="p-2 rounded-lg border border-slate-200 text-[11px] flex items-center justify-between gap-2"
+                            >
+                              <div className="min-w-0">
+                                <div className="font-medium text-slate-800 truncate">
+                                  {s.appDisplayName || 'Unknown App'}
+                                </div>
+                                <div className="text-slate-500 truncate">
+                                  {new Date(s.createdDateTime).toLocaleString()}{' '}
+                                  • {s.ipAddress || '—'}
+                                </div>
+                              </div>
+                              <span
+                                title={s.diagnosis.title}
+                                className={`px-1.5 py-0.5 rounded font-mono font-semibold shrink-0 ${
+                                  ok
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : 'bg-rose-50 text-rose-700'
+                                }`}
+                              >
+                                {ok ? 'OK' : s.diagnosis.aadstsCode}
+                              </span>
                             </div>
                           )
                         })}

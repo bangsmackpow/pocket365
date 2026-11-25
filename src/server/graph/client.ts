@@ -79,6 +79,70 @@ export interface GraphOrganization {
   }>
 }
 
+export interface GraphSignInStatus {
+  errorCode: number
+  failureReason: string | null
+  additionalDetails: string | null
+}
+
+export interface GraphSignInDeviceDetail {
+  deviceId: string | null
+  displayName: string | null
+  operatingSystem: string | null
+  browser: string | null
+  isCompliant: boolean | null
+  isManaged: boolean | null
+  trustType: string | null
+}
+
+export interface GraphSignInLocation {
+  city: string | null
+  state: string | null
+  countryOrRegion: string | null
+}
+
+export interface GraphAppliedCaPolicy {
+  id: string
+  displayName: string
+  result: string
+  enforcedGrantControls?: string[]
+  enforcedSessionControls?: string[]
+}
+
+export interface GraphSignIn {
+  id: string
+  createdDateTime: string
+  userDisplayName: string | null
+  userPrincipalName: string | null
+  userId: string | null
+  appDisplayName: string | null
+  appId: string | null
+  resourceDisplayName: string | null
+  ipAddress: string | null
+  clientAppUsed: string | null
+  correlationId: string | null
+  isInteractive: boolean | null
+  conditionalAccessStatus: string | null
+  riskLevelAggregated: string | null
+  riskLevelDuringSignIn: string | null
+  riskState: string | null
+  status: GraphSignInStatus
+  deviceDetail: GraphSignInDeviceDetail | null
+  location: GraphSignInLocation | null
+  appliedConditionalAccessPolicies?: GraphAppliedCaPolicy[]
+}
+
+export interface ListSignInLogsParams {
+  status?: 'all' | 'failure' | 'success' | 'mfa' | 'blocked'
+  user?: string
+  app?: string
+  ipAddress?: string
+  errorCode?: number
+  daysBack?: number
+  top?: number
+  nextLink?: string
+}
+
 export interface GraphPageResult<T> {
   items: T[]
   nextLink: string | null
@@ -460,6 +524,134 @@ export class MicrosoftGraphClient {
       `/users?$filter=userPrincipalName eq '${escaped}'&$select=id,displayName,userPrincipalName,mail,accountEnabled,jobTitle,department,officeLocation,assignedLicenses&$top=1`,
     )
     return res.value[0] ?? null
+  }
+
+  public async getGrantedRoles(): Promise<string[]> {
+    const token = await this.tokenProvider.getAccessToken()
+    const parts = token.split('.')
+    if (parts.length < 2 || !parts[1]) return []
+    try {
+      const parsed = JSON.parse(
+        Buffer.from(parts[1], 'base64url').toString('utf8'),
+      ) as { roles?: unknown }
+      if (!Array.isArray(parsed.roles)) return []
+      return parsed.roles
+        .filter((r): r is string => typeof r === 'string')
+        .sort()
+    } catch {
+      return []
+    }
+  }
+
+  public async listSignInLogs(
+    params: ListSignInLogsParams = {},
+  ): Promise<GraphPageResult<GraphSignIn>> {
+    if (params.nextLink) {
+      if (!params.nextLink.startsWith('https://graph.microsoft.com/')) {
+        throw new GraphApiError(
+          400,
+          'INVALID_NEXT_LINK',
+          'Invalid pagination link.',
+        )
+      }
+      const res = await this.request<{
+        value: GraphSignIn[]
+        '@odata.nextLink'?: string
+      }>(params.nextLink)
+      return {
+        items: res.value ?? [],
+        nextLink: res['@odata.nextLink'] ?? null,
+      }
+    }
+
+    const top = Math.min(Math.max(params.top ?? 50, 1), 200)
+    const filters: string[] = []
+
+    if (params.daysBack && params.daysBack > 0) {
+      const since = new Date(
+        Date.now() - params.daysBack * 24 * 60 * 60 * 1000,
+      ).toISOString()
+      filters.push(`createdDateTime ge ${since}`)
+    }
+
+    if (params.errorCode !== undefined && Number.isFinite(params.errorCode)) {
+      filters.push(`status/errorCode eq ${Math.trunc(params.errorCode)}`)
+    } else if (params.status === 'failure') {
+      filters.push('status/errorCode ne 0')
+    } else if (params.status === 'success') {
+      filters.push('status/errorCode eq 0')
+    } else if (params.status === 'mfa') {
+      filters.push(
+        '(status/errorCode eq 50074 or status/errorCode eq 50076 or status/errorCode eq 50079 or status/errorCode eq 500121 or status/errorCode eq 50158 or status/errorCode eq 53004)',
+      )
+    } else if (params.status === 'blocked') {
+      filters.push(
+        "(conditionalAccessStatus eq 'failure' or status/errorCode eq 53003 or status/errorCode eq 530032 or status/errorCode eq 50053 or status/errorCode eq 50057)",
+      )
+    }
+
+    if (params.user?.trim()) {
+      const escaped = escapeODataString(params.user.trim())
+      if (escaped.includes('@')) {
+        filters.push(`userPrincipalName eq '${escaped}'`)
+      } else {
+        filters.push(
+          `(startswith(userPrincipalName,'${escaped}') or startswith(userDisplayName,'${escaped}'))`,
+        )
+      }
+    }
+
+    if (params.app?.trim()) {
+      const escaped = escapeODataString(params.app.trim())
+      filters.push(`startswith(appDisplayName,'${escaped}')`)
+    }
+
+    if (params.ipAddress?.trim()) {
+      const escaped = escapeODataString(params.ipAddress.trim())
+      filters.push(`ipAddress eq '${escaped}'`)
+    }
+
+    const query = new URLSearchParams({
+      $top: String(top),
+      $orderby: 'createdDateTime desc',
+    })
+    if (filters.length > 0) {
+      query.set('$filter', filters.join(' and '))
+    }
+
+    const res = await this.request<{
+      value: GraphSignIn[]
+      '@odata.nextLink'?: string
+    }>(`/auditLogs/signIns?${query.toString()}`)
+
+    return {
+      items: res.value ?? [],
+      nextLink: res['@odata.nextLink'] ?? null,
+    }
+  }
+
+  public async listUserSignInLogs(
+    userIdOrUpn: string,
+    top = 15,
+  ): Promise<GraphSignIn[]> {
+    const trimmed = userIdOrUpn.trim()
+    const escaped = escapeODataString(trimmed)
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        trimmed,
+      )
+    const filter = isUuid
+      ? `userId eq '${escaped}'`
+      : `userPrincipalName eq '${escaped}'`
+    const query = new URLSearchParams({
+      $filter: filter,
+      $top: String(Math.min(Math.max(top, 1), 50)),
+      $orderby: 'createdDateTime desc',
+    })
+    const res = await this.request<{ value: GraphSignIn[] }>(
+      `/auditLogs/signIns?${query.toString()}`,
+    )
+    return res.value ?? []
   }
 }
 

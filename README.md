@@ -38,10 +38,11 @@ You can use either **one** App Registration for both OIDC login and Graph App-On
 ### B. Microsoft Graph App-Only Registration (`GRAPH_CLIENT_ID`)
 1. Create (or reuse) a **Single tenant** App Registration (`Pocket365 Graph Daemon`).
 2. Go to **API permissions** → **Add a permission** → **Microsoft Graph** → **Application permissions**:
-   - `User.ReadWrite.All` *(list/search users, toggle `accountEnabled`, assign/remove licenses)*
+   - `User.ReadWrite.All` *(list/search users, toggle `accountEnabled`, assign/remove licenses, offboarding)*
    - `Group.ReadWrite.All` *(list/search groups, read/add/remove group members)*
    - `Organization.Read.All` *(read tenant summary and `subscribedSkus` license pools)*
-   - `Directory.Read.All` *(optional fallback for transitive group lookup on login)*
+   - `AuditLog.Read.All` *(troubleshoot Entra sign-in logs and directory audit logs)*
+   - `Directory.Read.All` *(fallback group lookup on login and directory metadata)*
 3. Click **Grant admin consent for `<Your Tenant>`** and confirm all permissions show green checkmarks.
 4. Configure credentials using **one** of:
    - **Client Secret:** Create a secret under **Certificates & secrets** → set `GRAPH_CLIENT_SECRET`.

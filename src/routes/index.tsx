@@ -16,6 +16,7 @@ import {
   getDashboardDataFn,
   updateRuntimeSettingsFn,
 } from '~/server/functions/dashboard'
+import { getGraphPermissionsStatusFn } from '~/server/functions/signins'
 
 export const Route = createFileRoute('/')({
   beforeLoad: ({ context, location }) => {
@@ -40,6 +41,11 @@ function DashboardPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => getDashboardDataFn(),
+  })
+
+  const permsQuery = useQuery({
+    queryKey: ['graph-permissions'],
+    queryFn: () => getGraphPermissionsStatusFn(),
   })
 
   const [defaultPageSize, setDefaultPageSize] = useState(25)
@@ -125,8 +131,14 @@ function DashboardPage() {
         </div>
         <div className="flex items-center gap-2">
           <Link
-            to="/users"
+            to="/signins"
             className="px-3.5 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+          >
+            Sign-in Logs
+          </Link>
+          <Link
+            to="/users"
+            className="px-3.5 py-2 rounded-lg text-sm font-medium bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors"
           >
             Manage Users
           </Link>
@@ -277,6 +289,49 @@ function DashboardPage() {
           </div>
         )}
       </section>
+
+      {/* Graph Application Permissions Readiness */}
+      {permsQuery.data && (
+        <section className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <KeyRound className="h-4 w-4 text-indigo-600" />
+              Microsoft Graph Permissions Readiness
+            </h2>
+            <span className="text-xs text-slate-500">
+              {permsQuery.data.requirements.filter((r) => r.granted).length} /{' '}
+              {permsQuery.data.requirements.length} granted in active token
+            </span>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {permsQuery.data.requirements.map((req) => (
+              <div
+                key={req.permission}
+                className="px-5 py-3 flex flex-wrap items-center justify-between gap-3 text-xs"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <code className="font-mono font-semibold text-slate-900">
+                      {req.permission}
+                    </code>
+                    <span className="text-slate-500">• {req.module}</span>
+                  </div>
+                  <div className="text-slate-500 mt-0.5">{req.purpose}</div>
+                </div>
+                <span
+                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border shrink-0 ${
+                    req.granted
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-amber-50 text-amber-800 border-amber-200'
+                  }`}
+                >
+                  {req.granted ? 'Granted' : 'Missing'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Recent Audit Events */}
