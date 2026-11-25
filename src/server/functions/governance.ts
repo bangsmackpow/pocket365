@@ -21,98 +21,118 @@ import {
 } from '~/server/graph/signin-errors'
 import { getClientIp } from '~/server/http/proxy'
 
+async function waitMs(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function collectCisScan() {
+  const graph = getGraphClient()
+
+  const snapshot: CisTenantSnapshot = {
+    authorizationPolicy: null,
+    securityDefaults: null,
+    adminConsentPolicy: null,
+    conditionalAccessEnabledCount: null,
+    directoryRoles: null,
+    mfaRegistrations: null,
+    domains: null,
+  }
+
+  await Promise.all([
+    graph
+      .getAuthorizationPolicy()
+      .then((p) => {
+        snapshot.authorizationPolicy = p
+      })
+      .catch((err) => {
+        snapshot.authorizationPolicyError =
+          err instanceof Error ? err.message : String(err)
+      }),
+    graph
+      .getSecurityDefaultsPolicy()
+      .then((p) => {
+        snapshot.securityDefaults = p
+      })
+      .catch((err) => {
+        snapshot.securityDefaultsError =
+          err instanceof Error ? err.message : String(err)
+      }),
+    graph
+      .getAdminConsentRequestPolicy()
+      .then((p) => {
+        snapshot.adminConsentPolicy = p
+      })
+      .catch((err) => {
+        snapshot.adminConsentPolicyError =
+          err instanceof Error ? err.message : String(err)
+      }),
+    graph
+      .listConditionalAccessPoliciesSummary()
+      .then((policies) => {
+        snapshot.conditionalAccessEnabledCount = policies.filter(
+          (p) => p.state === 'enabled',
+        ).length
+      })
+      .catch(() => {
+        snapshot.conditionalAccessEnabledCount = 0
+      }),
+    graph
+      .listDirectoryRolesWithMembers()
+      .then((roles) => {
+        snapshot.directoryRoles = roles
+      })
+      .catch((err) => {
+        snapshot.directoryRolesError =
+          err instanceof Error ? err.message : String(err)
+      }),
+    graph
+      .listUserRegistrationDetails({ top: 500 })
+      .then((res) => {
+        snapshot.mfaRegistrations = res.items
+      })
+      .catch((err) => {
+        snapshot.mfaRegistrationsError =
+          err instanceof Error ? err.message : String(err)
+      }),
+    graph
+      .listDomains()
+      .then((domains) => {
+        snapshot.domains = domains
+      })
+      .catch((err) => {
+        snapshot.domainsError =
+          err instanceof Error ? err.message : String(err)
+      }),
+  ])
+
+  const checks = evaluateCisBenchmarks(snapshot)
+  const summary = summarizeCisChecks(checks)
+
+  return {
+    scannedAt: new Date().toISOString(),
+    checks,
+    summary,
+  }
+}
+
 export const runCisBenchmarkScanFn = createServerFn({ method: 'GET' }).handler(
   async () => {
     requireSession()
-    const graph = getGraphClient()
-
-    const snapshot: CisTenantSnapshot = {
-      authorizationPolicy: null,
-      securityDefaults: null,
-      adminConsentPolicy: null,
-      conditionalAccessEnabledCount: null,
-      directoryRoles: null,
-      mfaRegistrations: null,
-      domains: null,
-    }
-
-    await Promise.all([
-      graph
-        .getAuthorizationPolicy()
-        .then((p) => {
-          snapshot.authorizationPolicy = p
-        })
-        .catch((err) => {
-          snapshot.authorizationPolicyError =
-            err instanceof Error ? err.message : String(err)
-        }),
-      graph
-        .getSecurityDefaultsPolicy()
-        .then((p) => {
-          snapshot.securityDefaults = p
-        })
-        .catch((err) => {
-          snapshot.securityDefaultsError =
-            err instanceof Error ? err.message : String(err)
-        }),
-      graph
-        .getAdminConsentRequestPolicy()
-        .then((p) => {
-          snapshot.adminConsentPolicy = p
-        })
-        .catch((err) => {
-          snapshot.adminConsentPolicyError =
-            err instanceof Error ? err.message : String(err)
-        }),
-      graph
-        .listConditionalAccessPoliciesSummary()
-        .then((policies) => {
-          snapshot.conditionalAccessEnabledCount = policies.filter(
-            (p) => p.state === 'enabled',
-          ).length
-        })
-        .catch(() => {
-          snapshot.conditionalAccessEnabledCount = 0
-        }),
-      graph
-        .listDirectoryRolesWithMembers()
-        .then((roles) => {
-          snapshot.directoryRoles = roles
-        })
-        .catch((err) => {
-          snapshot.directoryRolesError =
-            err instanceof Error ? err.message : String(err)
-        }),
-      graph
-        .listUserRegistrationDetails({ top: 500 })
-        .then((res) => {
-          snapshot.mfaRegistrations = res.items
-        })
-        .catch((err) => {
-          snapshot.mfaRegistrationsError =
-            err instanceof Error ? err.message : String(err)
-        }),
-      graph
-        .listDomains()
-        .then((domains) => {
-          snapshot.domains = domains
-        })
-        .catch((err) => {
-          snapshot.domainsError =
-            err instanceof Error ? err.message : String(err)
-        }),
-    ])
-
-    const checks = evaluateCisBenchmarks(snapshot)
-    const summary = summarizeCisChecks(checks)
-
-    return {
-      scannedAt: new Date().toISOString(),
-      checks,
-      summary,
-    }
+    return collectCisScan()
   },
 )
+
+const REMEDIATION_TO_CHECK_ID: Record<CisRemediationId, string> = {
+  enable_security_defaults: 'security_defaults',
+  block_user_app_consent: 'user_app_consent',
+  disable_user_app_registration: 'user_app_registration',
+  disable_user_tenant_creation: 'user_tenant_creation',
+  disable_user_security_group_creation: 'user_security_groups',
+  restrict_guest_access: 'guest_access_restriction',
+  restrict_guest_invites: 'guest_invite_restriction',
+  block_msol_powershell: 'block_msol_powershell',
+  enable_admin_consent_workflow: 'admin_consent_workflow',
+}
 
 const remediationSchema = z.object({
   remediationId: z.enum([
@@ -138,6 +158,20 @@ export const applyCisRemediationFn = createServerFn({ method: 'POST' })
     const id: CisRemediationId = data.remediationId
     let summary = ''
 
+    const patchDefaultRolePerms = async (
+      updates: NonNullable<
+        Awaited<ReturnType<typeof graph.getAuthorizationPolicy>>['defaultUserRolePermissions']
+      >,
+    ) => {
+      const current = await graph.getAuthorizationPolicy()
+      await graph.updateAuthorizationPolicy({
+        defaultUserRolePermissions: {
+          ...(current.defaultUserRolePermissions ?? {}),
+          ...updates,
+        },
+      })
+    }
+
     try {
       switch (id) {
         case 'enable_security_defaults':
@@ -145,34 +179,26 @@ export const applyCisRemediationFn = createServerFn({ method: 'POST' })
           summary = 'Enabled Microsoft Entra Security Defaults (CIS 5.2.2.1).'
           break
         case 'block_user_app_consent':
-          await graph.updateAuthorizationPolicy({
-            defaultUserRolePermissions: {
-              permissionGrantPoliciesAssigned: [],
-            },
+          await patchDefaultRolePerms({
+            permissionGrantPoliciesAssigned: [],
           })
           summary = 'Blocked unrestricted user app consent (CIS 5.1.2.1).'
           break
         case 'disable_user_app_registration':
-          await graph.updateAuthorizationPolicy({
-            defaultUserRolePermissions: {
-              allowedToCreateApps: false,
-            },
+          await patchDefaultRolePerms({
+            allowedToCreateApps: false,
           })
           summary = 'Disabled non-admin app registrations (CIS 5.1.2.2).'
           break
         case 'disable_user_tenant_creation':
-          await graph.updateAuthorizationPolicy({
-            defaultUserRolePermissions: {
-              allowedToCreateTenants: false,
-            },
+          await patchDefaultRolePerms({
+            allowedToCreateTenants: false,
           })
           summary = 'Blocked non-admin Entra tenant creation (CIS 5.1.2.3).'
           break
         case 'disable_user_security_group_creation':
-          await graph.updateAuthorizationPolicy({
-            defaultUserRolePermissions: {
-              allowedToCreateSecurityGroups: false,
-            },
+          await patchDefaultRolePerms({
+            allowedToCreateSecurityGroups: false,
           })
           summary = 'Restricted non-admin security group creation (CIS 5.1.2.4).'
           break
@@ -200,6 +226,24 @@ export const applyCisRemediationFn = createServerFn({ method: 'POST' })
           break
       }
 
+      // Poll Entra briefly for read-after-write replication before returning the refreshed scan
+      const targetCheckId = REMEDIATION_TO_CHECK_ID[id]
+      let refreshedScan = await collectCisScan()
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const updatedCheck = refreshedScan.checks.find(
+          (c) => c.id === targetCheckId,
+        )
+        if (updatedCheck?.status === 'pass') {
+          break
+        }
+        await waitMs(1500)
+        refreshedScan = await collectCisScan()
+      }
+
+      const verifiedPass =
+        refreshedScan.checks.find((c) => c.id === targetCheckId)?.status ===
+        'pass'
+
       recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
@@ -207,11 +251,18 @@ export const applyCisRemediationFn = createServerFn({ method: 'POST' })
         action: `cis.remediate:${id}`,
         target: 'tenant_policy',
         status: 'success',
-        details: { remediationId: id, summary },
+        details: { remediationId: id, summary, verifiedPass },
         ipAddress,
       })
 
-      return { ok: true, summary }
+      return {
+        ok: true,
+        verifiedPass,
+        summary: verifiedPass
+          ? summary
+          : `${summary} Entra ID may still be replicating this policy change—click Re-scan Tenant in a few seconds if it still shows Failed.`,
+        scan: refreshedScan,
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       recordAuditLog({

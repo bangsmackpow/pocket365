@@ -64,7 +64,11 @@ function CisBenchmarksPage() {
     onSuccess: (res) => {
       setActiveRemediation(null)
       setBanner({ type: 'success', text: res.summary })
-      queryClient.invalidateQueries({ queryKey: ['cis-benchmarks'] })
+      if (res.scan) {
+        queryClient.setQueryData(['cis-benchmarks'], res.scan)
+      } else {
+        queryClient.invalidateQueries({ queryKey: ['cis-benchmarks'] })
+      }
     },
     onError: (err) => {
       setActiveRemediation(null)

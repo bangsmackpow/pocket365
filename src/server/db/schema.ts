@@ -92,7 +92,27 @@ export const appSettings = sqliteTable('app_settings', {
   updatedAt: integer('updated_at').notNull(),
 })
 
+export const policySnapshots = sqliteTable(
+  'policy_snapshots',
+  {
+    id: text('id').primaryKey(),
+    snapshotType: text('snapshot_type').notNull(),
+    label: text('label').notNull(),
+    actorUpn: text('actor_upn').notNull(),
+    policyCount: integer('policy_count').notNull(),
+    payloadJson: text('payload_json').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_policy_snapshots_type_created').on(
+      table.snapshotType,
+      table.createdAt,
+    ),
+  ],
+)
+
 export type SessionRow = typeof sessions.$inferSelect
 export type AuditLogRow = typeof auditLogs.$inferSelect
 export type JobRow = typeof jobs.$inferSelect
 export type AppSettingRow = typeof appSettings.$inferSelect
+export type PolicySnapshotRow = typeof policySnapshots.$inferSelect

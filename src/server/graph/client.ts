@@ -279,6 +279,157 @@ export interface GraphDomain {
   passwordNotificationWindowInDays: number | null
 }
 
+export interface GraphAppCredential {
+  keyId: string
+  displayName?: string | null
+  startDateTime?: string | null
+  endDateTime?: string | null
+  hint?: string | null
+}
+
+export interface GraphApplication {
+  id: string
+  appId: string
+  displayName: string
+  createdDateTime?: string | null
+  signInAudience?: string | null
+  passwordCredentials?: GraphAppCredential[]
+  keyCredentials?: GraphAppCredential[]
+}
+
+export interface GraphOAuth2PermissionGrant {
+  id: string
+  clientId: string
+  consentType: string
+  principalId: string | null
+  resourceId: string
+  scope: string
+}
+
+export interface GraphServicePrincipalLite {
+  id: string
+  appId: string
+  displayName: string
+}
+
+export interface GraphStaleUserCandidate extends GraphUser {
+  userType?: string | null
+  signInActivity?: {
+    lastSignInDateTime?: string | null
+    lastNonInteractiveSignInDateTime?: string | null
+  } | null
+}
+
+export interface GraphMailboxAutoReplies {
+  status: 'disabled' | 'alwaysEnabled' | 'scheduled'
+  externalAudience?: 'none' | 'contactsOnly' | 'all'
+  internalReplyMessage?: string | null
+  externalReplyMessage?: string | null
+  scheduledStartDateTime?: { dateTime: string; timeZone: string } | null
+  scheduledEndDateTime?: { dateTime: string; timeZone: string } | null
+}
+
+export interface GraphMailboxSettings {
+  timeZone?: string | null
+  language?: { locale?: string; displayName?: string } | null
+  automaticRepliesSetting?: GraphMailboxAutoReplies | null
+}
+
+export interface GraphInboxRule {
+  id: string
+  displayName: string
+  sequence?: number
+  isEnabled: boolean
+  hasError?: boolean
+  conditions?: Record<string, unknown>
+  actions?: {
+    forwardTo?: Array<{ emailAddress?: { name?: string; address?: string } }>
+    forwardAsAttachmentTo?: Array<{
+      emailAddress?: { name?: string; address?: string }
+    }>
+    redirectTo?: Array<{ emailAddress?: { name?: string; address?: string } }>
+    delete?: boolean
+    permanentDelete?: boolean
+    markAsRead?: boolean
+    moveToFolder?: string
+    stopProcessingRules?: boolean
+  }
+}
+
+export interface GraphConditionalAccessPolicy {
+  id: string
+  displayName: string
+  state: 'enabled' | 'disabled' | 'enabledForReportingButNotEnforced'
+  createdDateTime?: string | null
+  modifiedDateTime?: string | null
+  conditions?: Record<string, unknown>
+  grantControls?: {
+    operator?: string
+    builtInControls?: string[]
+  } | null
+  sessionControls?: Record<string, unknown> | null
+}
+
+export interface GraphManagedDevice {
+  id: string
+  deviceName: string | null
+  operatingSystem: string | null
+  osVersion: string | null
+  complianceState: string | null
+  userPrincipalName: string | null
+  userDisplayName: string | null
+  lastSyncDateTime: string | null
+  manufacturer: string | null
+  model: string | null
+  serialNumber: string | null
+  azureADDeviceId: string | null
+}
+
+export interface GraphBitlockerRecoveryKey {
+  id: string
+  createdDateTime: string | null
+  deviceId: string | null
+  volumeType: string | null
+  key?: string | null
+}
+
+export interface GraphRiskyUser {
+  id: string
+  userDisplayName: string | null
+  userPrincipalName: string | null
+  riskLevel: string | null
+  riskState: string | null
+  riskDetail: string | null
+  riskLastUpdatedDateTime: string | null
+}
+
+export interface GraphSecureScore {
+  id: string
+  createdDateTime: string
+  currentScore: number
+  maxScore: number
+  activeUserCount?: number
+  licensedUserCount?: number
+  controlScores?: Array<{
+    controlName: string
+    controlCategory: string
+    score: number
+    description?: string
+  }>
+}
+
+export interface GraphSecurityAlert {
+  id: string
+  title: string
+  severity: string
+  status: string
+  category?: string | null
+  serviceSource?: string | null
+  createdDateTime: string
+  lastUpdateDateTime?: string | null
+  description?: string | null
+}
+
 export interface GraphPageResult<T> {
   items: T[]
   nextLink: string | null
@@ -1081,6 +1232,191 @@ export class MicrosoftGraphClient {
     const res = await this.request<{
       value: Array<{ id: string; displayName: string; state: string }>
     }>('/identity/conditionalAccess/policies?$select=id,displayName,state&$top=50')
+    return res.value ?? []
+  }
+
+  public async listConditionalAccessPoliciesFull(): Promise<
+    GraphConditionalAccessPolicy[]
+  > {
+    const res = await this.request<{ value: GraphConditionalAccessPolicy[] }>(
+      '/identity/conditionalAccess/policies?$top=100',
+    )
+    return res.value ?? []
+  }
+
+  public async setConditionalAccessPolicyState(
+    policyId: string,
+    state: 'enabled' | 'disabled' | 'enabledForReportingButNotEnforced',
+  ): Promise<void> {
+    await this.request<void>(
+      `/identity/conditionalAccess/policies/${encodeURIComponent(policyId)}`,
+      {
+        method: 'PATCH',
+        body: { state },
+      },
+    )
+  }
+
+  public async listApplications(top = 150): Promise<GraphApplication[]> {
+    const res = await this.request<{ value: GraphApplication[] }>(
+      `/applications?$select=id,appId,displayName,createdDateTime,signInAudience,passwordCredentials,keyCredentials&$top=${Math.min(Math.max(top, 1), 999)}`,
+    )
+    return res.value ?? []
+  }
+
+  public async listOAuth2PermissionGrants(
+    top = 150,
+  ): Promise<GraphOAuth2PermissionGrant[]> {
+    const res = await this.request<{ value: GraphOAuth2PermissionGrant[] }>(
+      `/oauth2PermissionGrants?$top=${Math.min(Math.max(top, 1), 999)}`,
+    )
+    return res.value ?? []
+  }
+
+  public async deleteOAuth2PermissionGrant(grantId: string): Promise<void> {
+    await this.request<void>(
+      `/oauth2PermissionGrants/${encodeURIComponent(grantId)}`,
+      { method: 'DELETE' },
+    )
+  }
+
+  public async listServicePrincipalsLite(
+    top = 300,
+  ): Promise<GraphServicePrincipalLite[]> {
+    const res = await this.request<{ value: GraphServicePrincipalLite[] }>(
+      `/servicePrincipals?$select=id,appId,displayName&$top=${Math.min(Math.max(top, 1), 999)}`,
+    )
+    return res.value ?? []
+  }
+
+  public async listUsersForStaleAudit(top = 250): Promise<{
+    users: GraphStaleUserCandidate[]
+    hasSignInActivityField: boolean
+  }> {
+    const clamped = Math.min(Math.max(top, 1), 999)
+    try {
+      const res = await this.request<{ value: GraphStaleUserCandidate[] }>(
+        `/users?$select=id,displayName,userPrincipalName,mail,userType,accountEnabled,jobTitle,department,officeLocation,createdDateTime,assignedLicenses,signInActivity&$top=${clamped}`,
+      )
+      return { users: res.value ?? [], hasSignInActivityField: true }
+    } catch (err) {
+      if (err instanceof GraphApiError && (err.status === 403 || err.status === 400)) {
+        const res = await this.request<{ value: GraphStaleUserCandidate[] }>(
+          `/users?$select=id,displayName,userPrincipalName,mail,userType,accountEnabled,jobTitle,department,officeLocation,createdDateTime,assignedLicenses&$top=${clamped}`,
+        )
+        return { users: res.value ?? [], hasSignInActivityField: false }
+      }
+      throw err
+    }
+  }
+
+  public async getUserMailboxSettings(
+    userId: string,
+  ): Promise<GraphMailboxSettings> {
+    return this.request<GraphMailboxSettings>(
+      `/users/${encodeURIComponent(userId)}/mailboxSettings`,
+    )
+  }
+
+  public async updateUserAutoReplies(
+    userId: string,
+    automaticRepliesSetting: GraphMailboxAutoReplies,
+  ): Promise<GraphMailboxSettings> {
+    return this.request<GraphMailboxSettings>(
+      `/users/${encodeURIComponent(userId)}/mailboxSettings`,
+      {
+        method: 'PATCH',
+        body: { automaticRepliesSetting },
+      },
+    )
+  }
+
+  public async listUserInboxRules(userId: string): Promise<GraphInboxRule[]> {
+    const res = await this.request<{ value: GraphInboxRule[] }>(
+      `/users/${encodeURIComponent(userId)}/mailFolders/inbox/messageRules`,
+    )
+    return res.value ?? []
+  }
+
+  public async deleteUserInboxRule(
+    userId: string,
+    ruleId: string,
+  ): Promise<void> {
+    await this.request<void>(
+      `/users/${encodeURIComponent(userId)}/mailFolders/inbox/messageRules/${encodeURIComponent(ruleId)}`,
+      { method: 'DELETE' },
+    )
+  }
+
+  public async listManagedDevices(top = 100): Promise<GraphManagedDevice[]> {
+    const res = await this.request<{ value: GraphManagedDevice[] }>(
+      `/deviceManagement/managedDevices?$select=id,deviceName,operatingSystem,osVersion,complianceState,userPrincipalName,userDisplayName,lastSyncDateTime,manufacturer,model,serialNumber,azureADDeviceId&$top=${Math.min(Math.max(top, 1), 500)}`,
+    )
+    return res.value ?? []
+  }
+
+  public async syncManagedDevice(deviceId: string): Promise<void> {
+    await this.request<void>(
+      `/deviceManagement/managedDevices/${encodeURIComponent(deviceId)}/syncDevice`,
+      { method: 'POST', body: {} },
+    )
+  }
+
+  public async remoteLockManagedDevice(deviceId: string): Promise<void> {
+    await this.request<void>(
+      `/deviceManagement/managedDevices/${encodeURIComponent(deviceId)}/remoteLock`,
+      { method: 'POST', body: {} },
+    )
+  }
+
+  public async listBitlockerRecoveryKeys(
+    top = 100,
+  ): Promise<GraphBitlockerRecoveryKey[]> {
+    const res = await this.request<{ value: GraphBitlockerRecoveryKey[] }>(
+      `/informationProtection/bitlocker/recoveryKeys?$select=id,createdDateTime,deviceId,volumeType&$top=${Math.min(Math.max(top, 1), 500)}`,
+    )
+    return res.value ?? []
+  }
+
+  public async getBitlockerRecoveryKeyValue(keyId: string): Promise<string> {
+    const res = await this.request<GraphBitlockerRecoveryKey>(
+      `/informationProtection/bitlocker/recoveryKeys/${encodeURIComponent(keyId)}?$select=id,key`,
+    )
+    return res.key ?? ''
+  }
+
+  public async listRiskyUsers(top = 100): Promise<GraphRiskyUser[]> {
+    const res = await this.request<{ value: GraphRiskyUser[] }>(
+      `/identityProtection/riskyUsers?$top=${Math.min(Math.max(top, 1), 500)}`,
+    )
+    return res.value ?? []
+  }
+
+  public async confirmRiskyUserCompromised(userId: string): Promise<void> {
+    await this.request<void>('/identityProtection/riskyUsers/confirmCompromised', {
+      method: 'POST',
+      body: { userIds: [userId] },
+    })
+  }
+
+  public async dismissRiskyUser(userId: string): Promise<void> {
+    await this.request<void>('/identityProtection/riskyUsers/dismiss', {
+      method: 'POST',
+      body: { userIds: [userId] },
+    })
+  }
+
+  public async getLatestSecureScore(): Promise<GraphSecureScore | null> {
+    const res = await this.request<{ value: GraphSecureScore[] }>(
+      '/security/secureScores?$top=1',
+    )
+    return res.value[0] ?? null
+  }
+
+  public async listSecurityAlerts(top = 50): Promise<GraphSecurityAlert[]> {
+    const res = await this.request<{ value: GraphSecurityAlert[] }>(
+      `/security/alerts_v2?$top=${Math.min(Math.max(top, 1), 200)}&$orderby=createdDateTime desc`,
+    )
     return res.value ?? []
   }
 }

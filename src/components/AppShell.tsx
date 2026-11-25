@@ -1,14 +1,18 @@
 import { Link, useRouterState } from '@tanstack/react-router'
 import {
   Activity,
+  AppWindow,
   ClipboardCheck,
   Crown,
   KeyRound,
   LayoutDashboard,
   LogOut,
+  Mail,
+  Radar,
   Shield,
   ShieldAlert,
   ShieldCheck,
+  UserMinus,
   Users,
   UsersRound,
 } from 'lucide-react'
@@ -37,6 +41,10 @@ const NAV_ITEMS = [
   { to: '/roles', label: 'Privileged Roles', icon: Crown },
   { to: '/users', label: 'Users', icon: Users },
   { to: '/groups', label: 'Groups', icon: UsersRound },
+  { to: '/mailboxes', label: 'Mailboxes', icon: Mail },
+  { to: '/apps', label: 'Apps & OAuth', icon: AppWindow },
+  { to: '/cleanup', label: 'Stale & Guests', icon: UserMinus },
+  { to: '/posture', label: 'Posture & Devices', icon: Radar },
   { to: '/audit', label: 'Audit & Jobs', icon: Activity },
 ] as const
 
