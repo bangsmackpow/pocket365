@@ -567,7 +567,9 @@ export class MicrosoftGraphClient {
 
   constructor(deps: GraphClientDependencies = {}) {
     this.tokenProvider = deps.tokenProvider ?? getGraphTokenProvider()
-    this.fetchImpl = deps.fetchImpl ?? fetch
+    const rawFetch = deps.fetchImpl ?? globalThis.fetch
+    this.fetchImpl = (input: RequestInfo | URL, init?: RequestInit) =>
+      rawFetch.call(globalThis, input, init)
     this.sleepImpl = deps.sleepImpl ?? defaultSleep
     this.maxRetriesOverride = deps.maxRetries
     this.baseBackoffOverride = deps.baseBackoffMs

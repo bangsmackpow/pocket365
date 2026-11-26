@@ -103,11 +103,12 @@ export async function deliverAlertToWebhooks(
   let failed = 0
   const errors: string[] = []
 
+  const rawFetch = fetchImpl ?? globalThis.fetch
   for (const hook of enabledHooks) {
     try {
       const targetUrl = decryptSecret(hook.url)
       await assertSafeWebhookUrl(targetUrl)
-      const res = await fetchImpl(targetUrl, {
+      const res = await rawFetch.call(globalThis, targetUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formatWebhookPayload(hook.provider, alert)),

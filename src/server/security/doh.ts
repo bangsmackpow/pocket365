@@ -24,7 +24,8 @@ async function queryDoh(
   fetchImpl: typeof fetch = fetch,
 ): Promise<DohAnswer[]> {
   const url = `${DOH_ENDPOINT}?name=${encodeURIComponent(hostname)}&type=${recordType}`
-  const res = await fetchImpl(url, {
+  const rawFetch = fetchImpl ?? globalThis.fetch
+  const res = await rawFetch.call(globalThis, url, {
     method: 'GET',
     headers: { Accept: 'application/dns-json' },
   })

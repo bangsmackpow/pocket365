@@ -69,7 +69,9 @@ export class GraphTokenProvider {
     fetchImpl: typeof fetch = fetch,
     overrideCredentials?: TenantGraphCredentials,
   ) {
-    this.fetchImpl = fetchImpl
+    const rawFetch = fetchImpl ?? globalThis.fetch
+    this.fetchImpl = (input: RequestInfo | URL, init?: RequestInit) =>
+      rawFetch.call(globalThis, input, init)
     this.overrideCredentials = overrideCredentials
   }
 

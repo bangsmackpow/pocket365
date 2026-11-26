@@ -156,4 +156,35 @@ describe('Microsoft Graph Client, Auth & Async Job Runner', () => {
     const retried = await retryFailedJob(job2.id, actor)
     expect(['queued', 'running', 'failed']).toContain(retried.status)
   })
+
+  it('calls fetchImpl with globalThis context preventing illegal invocation', async () => {
+    function strictThisFetch(
+      this: unknown,
+      _input: RequestInfo | URL,
+      _init?: RequestInit,
+    ): Promise<Response> {
+      if (this !== globalThis) {
+        throw new TypeError(
+          'Illegal invocation: function called with incorrect `this` reference.',
+        )
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ value: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+    }
+
+    const client = new MicrosoftGraphClient({
+      tokenProvider: {
+        getAccessToken: () => Promise.resolve('mock-token'),
+        invalidate: () => {},
+      } as unknown as GraphTokenProvider,
+      fetchImpl: strictThisFetch as typeof fetch,
+    })
+
+    const result = await client.request<{ value: unknown[] }>('/users')
+    expect(result.value).toEqual([])
+  })
 })

@@ -46,7 +46,8 @@ export async function createStripeCheckoutSession(
     body.set('customer_email', params.customerEmail)
   }
 
-  const res = await fetchImpl(`${STRIPE_API_BASE}/checkout/sessions`, {
+  const rawFetch = fetchImpl ?? globalThis.fetch
+  const res = await rawFetch.call(globalThis, `${STRIPE_API_BASE}/checkout/sessions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${params.secretKey}`,
@@ -91,7 +92,8 @@ export async function createStripeBillingPortalSession(
     return_url: params.returnUrl,
   })
 
-  const res = await fetchImpl(`${STRIPE_API_BASE}/billing_portal/sessions`, {
+  const rawFetch = fetchImpl ?? globalThis.fetch
+  const res = await rawFetch.call(globalThis, `${STRIPE_API_BASE}/billing_portal/sessions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${params.secretKey}`,
