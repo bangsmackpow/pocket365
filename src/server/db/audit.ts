@@ -14,7 +14,9 @@ export interface RecordAuditInput {
   ipAddress?: string | null
 }
 
-export function recordAuditLog(input: RecordAuditInput): AuditLogRow {
+export async function recordAuditLog(
+  input: RecordAuditInput,
+): Promise<AuditLogRow> {
   const db = getDb()
   const row: AuditLogRow = {
     id: crypto.randomUUID(),
@@ -29,7 +31,7 @@ export function recordAuditLog(input: RecordAuditInput): AuditLogRow {
     createdAt: Date.now(),
   }
 
-  db.insert(auditLogs).values(row).run()
+  await db.insert(auditLogs).values(row).run()
   return row
 }
 
@@ -40,7 +42,9 @@ export interface ListAuditLogsOptions {
   search?: string
 }
 
-export function listAuditLogs(options: ListAuditLogsOptions = {}): AuditLogRow[] {
+export async function listAuditLogs(
+  options: ListAuditLogsOptions = {},
+): Promise<AuditLogRow[]> {
   const db = getDb()
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 500)
   const conditions = []
@@ -63,12 +67,11 @@ export function listAuditLogs(options: ListAuditLogsOptions = {}): AuditLogRow[]
     )
   }
 
-  const query = db
+  return db
     .select()
     .from(auditLogs)
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(auditLogs.createdAt))
     .limit(limit)
-
-  return query.all()
+    .all()
 }

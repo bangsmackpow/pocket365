@@ -12,8 +12,8 @@ import {
   SESSION_COOKIE_NAME,
 } from './session'
 import { resetConfigCache } from '~/server/config'
-import { closeDb, initDbForTesting } from '~/server/db'
 import { listAuditLogs } from '~/server/db/audit'
+import { closeTestDb, initDbForTesting } from '~/server/db/test-d1'
 
 const TENANT_ID = '11111111-2222-3333-4444-555555555555'
 const CLIENT_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
@@ -33,11 +33,11 @@ describe('Pocket365 Auth, OIDC Verification, Sessions & RBAC', () => {
       VIEWER_OIDS_OR_GROUPS: 'viewer-oid-123,group-viewer-id',
     }
     resetConfigCache()
-    initDbForTesting(':memory:')
+    initDbForTesting()
   })
 
   afterEach(() => {
-    closeDb()
+    closeTestDb()
     process.env = { ...originalEnv }
     resetConfigCache()
   })
@@ -51,7 +51,6 @@ describe('Pocket365 Auth, OIDC Verification, Sessions & RBAC', () => {
       }),
     ).toBe('admin')
 
-    // Admin takes precedence when user is in both groups
     expect(
       resolveUserRole({
         oid: 'viewer-oid-123',
@@ -106,7 +105,6 @@ describe('Pocket365 Auth, OIDC Verification, Sessions & RBAC', () => {
     expect(verified.upn).toBe('alice@contoso.com')
     expect(verified.groups).toEqual(['group-admin-id'])
 
-    // Wrong nonce must fail
     await expect(
       verifyEntraIdToken({
         idToken: validJwt,
@@ -117,7 +115,6 @@ describe('Pocket365 Auth, OIDC Verification, Sessions & RBAC', () => {
       }),
     ).rejects.toThrow(/nonce/i)
 
-    // Wrong tenant tid must fail (single-tenant enforcement)
     const crossTenantJwt = await new SignJWT({
       tid: '99999999-9999-9999-9999-999999999999',
       oid: 'user-oid-2',
@@ -141,8 +138,8 @@ describe('Pocket365 Auth, OIDC Verification, Sessions & RBAC', () => {
     ).rejects.toThrow(/tenant/i)
   })
 
-  it('persists sessions in SQLite and sets Secure HttpOnly SameSite=Lax cookies behind HTTPS / NPM', () => {
-    const { rawToken } = createSession({
+  it('persists sessions in D1 and sets Secure HttpOnly SameSite=Lax cookies behind HTTPS', async () => {
+    const { rawToken } = await createSession({
       userOid: 'oid-1',
       userUpn: 'admin@contoso.com',
       displayName: 'Admin User',
@@ -155,7 +152,6 @@ describe('Pocket365 Auth, OIDC Verification, Sessions & RBAC', () => {
     expect(httpsCookie).toContain('SameSite=Lax')
     expect(httpsCookie).toContain('Secure')
 
-    // Even if APP_BASE_URL is http, X-Forwarded-Proto: https must trigger Secure
     process.env.APP_BASE_URL = 'http://localhost:3000'
     resetConfigCache()
     const proxiedReq = new Request('http://pocket365:3000/api/auth/login', {
@@ -169,24 +165,24 @@ describe('Pocket365 Auth, OIDC Verification, Sessions & RBAC', () => {
     const authedReq = new Request('http://pocket365:3000/users', {
       headers: { cookie: `${SESSION_COOKIE_NAME}=${rawToken}` },
     })
-    const loaded = getSessionFromRequest(authedReq)
+    const loaded = await getSessionFromRequest(authedReq)
     expect(loaded?.upn).toBe('admin@contoso.com')
     expect(loaded?.role).toBe('admin')
 
-    destroySessionFromRequest(authedReq)
-    expect(getSessionFromRequest(authedReq)).toBeNull()
+    await destroySessionFromRequest(authedReq)
+    expect(await getSessionFromRequest(authedReq)).toBeNull()
   })
 
   it('strictly enforces requireRole("admin") returning 403 Forbidden for viewer and 401 for anonymous', async () => {
     const anonReq = new Request('https://pocket365.example.com/api/test')
-    expect(() => requireRole('admin', anonReq)).toThrowError(AuthHttpError)
-    const anonGuard = guardApiRole('admin', anonReq)
+    await expect(requireRole('admin', anonReq)).rejects.toThrowError(AuthHttpError)
+    const anonGuard = await guardApiRole('admin', anonReq)
     expect(anonGuard.ok).toBe(false)
     if (!anonGuard.ok) {
       expect(anonGuard.response.status).toBe(401)
     }
 
-    const { rawToken: viewerToken } = createSession({
+    const { rawToken: viewerToken } = await createSession({
       userOid: 'viewer-oid-123',
       userUpn: 'viewer@contoso.com',
       displayName: 'Read Only Viewer',
@@ -198,18 +194,15 @@ describe('Pocket365 Auth, OIDC Verification, Sessions & RBAC', () => {
       headers: { cookie: `${SESSION_COOKIE_NAME}=${viewerToken}` },
     })
 
-    // Viewer can pass requireRole('viewer')
-    expect(requireRole('viewer', viewerReq).role).toBe('viewer')
+    expect((await requireRole('viewer', viewerReq)).role).toBe('viewer')
 
-    // Viewer MUST receive 403 Forbidden on requireRole('admin')
-    const guardRes = guardApiRole('admin', viewerReq, 'user.toggle_enabled')
+    const guardRes = await guardApiRole('admin', viewerReq, 'user.toggle_enabled')
     expect(guardRes.ok).toBe(false)
     if (!guardRes.ok) {
       expect(guardRes.response.status).toBe(403)
     }
 
-    // RBAC denial should be recorded in audit logs
-    const logs = listAuditLogs({ limit: 10 })
+    const logs = await listAuditLogs({ limit: 10 })
     expect(
       logs.some(
         (l) =>

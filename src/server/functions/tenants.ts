@@ -16,7 +16,7 @@ import { collectCisScan } from '~/server/graph/cis-scanner'
 import { evictTenantGraphClient, getGraphClient } from '~/server/graph/client'
 import { summarizeMfaCoverage } from '~/server/graph/mfa-helpers'
 import { getClientIp } from '~/server/http/proxy'
-import { enforceRateLimit } from '~/server/security/rate-limit'
+import { enforceRateLimitAsync } from '~/server/security/rate-limit'
 import {
   createAdminConsentRequestUrl,
   createManagedTenantRecord,
@@ -30,14 +30,16 @@ import {
 export const getTenantsCommandCenterFn = createServerFn({
   method: 'GET',
 }).handler(async () => {
-  const session = requireSession()
-  const accessible = listAccessibleTenants(session)
-  const active = resolveActiveTenantForSession(session)
-  const plan = getActivePlan()
+  const session = await requireSession()
+  const [accessible, active, plan] = await Promise.all([
+    listAccessibleTenants(session),
+    resolveActiveTenantForSession(session),
+    getActivePlan(),
+  ])
   const db = getDb()
 
   const accessRules = isAdminRole(session.role)
-    ? db
+    ? await db
         .select()
         .from(tenantAccess)
         .orderBy(desc(tenantAccess.createdAt))
@@ -79,9 +81,9 @@ const switchTenantSchema = z.object({
 export const switchActiveTenantFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => switchTenantSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireSession()
-    const switched = setSessionActiveTenant(session, data.managedTenantId)
-    recordAuditLog({
+    const session = await requireSession()
+    const switched = await setSessionActiveTenant(session, data.managedTenantId)
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -116,11 +118,13 @@ const addTenantSchema = z.object({
 export const addManagedTenantFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => addTenantSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'tenant.add')
-    requireEntitlement('tenants.multi_tenant', session)
+    const session = await requireRole('admin', undefined, 'tenant.add')
+    await requireEntitlement('tenants.multi_tenant', session)
 
-    const plan = getActivePlan()
-    const current = listAllManagedTenants()
+    const [plan, current] = await Promise.all([
+      getActivePlan(),
+      listAllManagedTenants(),
+    ])
     if (plan.enforcement === 'strict' && current.length >= plan.maxTenants) {
       throw new Error(
         `Managed tenant limit reached (${plan.maxTenants} max on ${plan.tier} plan).`,
@@ -136,7 +140,7 @@ export const addManagedTenantFn = createServerFn({ method: 'POST' })
       )
     }
 
-    const created = createManagedTenantRecord({
+    const created = await createManagedTenantRecord({
       entraTenantId: data.entraTenantId,
       displayName: data.displayName,
       primaryDomain: data.primaryDomain,
@@ -146,7 +150,7 @@ export const addManagedTenantFn = createServerFn({ method: 'POST' })
       createdBy: session.upn,
     })
 
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -171,21 +175,25 @@ const tenantIdSchema = z.object({
 export const deleteManagedTenantFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => tenantIdSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'tenant.delete')
-    const target = getManagedTenantById(data.managedTenantId)
+    const session = await requireRole('admin', undefined, 'tenant.delete')
+    const target = await getManagedTenantById(data.managedTenantId)
     if (!target) throw new Error('Managed tenant not found.')
     if (target.isPrimary === 1) {
       throw new Error('Cannot remove the primary environment-configured tenant.')
     }
 
     const db = getDb()
-    db.delete(tenantAccess)
+    await db
+      .delete(tenantAccess)
       .where(eq(tenantAccess.managedTenantId, target.id))
       .run()
-    db.delete(managedTenants).where(eq(managedTenants.id, target.id)).run()
+    await db
+      .delete(managedTenants)
+      .where(eq(managedTenants.id, target.id))
+      .run()
     evictTenantGraphClient(target.id)
 
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -202,21 +210,22 @@ export const deleteManagedTenantFn = createServerFn({ method: 'POST' })
 export const testTenantConnectionFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => tenantIdSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'tenant.test_connection')
-    const target = getManagedTenantById(data.managedTenantId)
+    const session = await requireRole('admin', undefined, 'tenant.test_connection')
+    const target = await getManagedTenantById(data.managedTenantId)
     if (!target) throw new Error('Managed tenant not found.')
 
     const db = getDb()
     const now = Date.now()
     try {
-      const client = getGraphClient(target.id)
+      const client = await getGraphClient(target.id)
       const org = await client.getOrganization()
       const primaryDomain =
         org?.verifiedDomains.find((d) => d.isDefault)?.name ||
         org?.verifiedDomains[0]?.name ||
         target.primaryDomain
 
-      db.update(managedTenants)
+      await db
+        .update(managedTenants)
         .set({
           displayName: org?.displayName || target.displayName,
           primaryDomain,
@@ -228,7 +237,7 @@ export const testTenantConnectionFn = createServerFn({ method: 'POST' })
         .where(eq(managedTenants.id, target.id))
         .run()
 
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -246,7 +255,8 @@ export const testTenantConnectionFn = createServerFn({ method: 'POST' })
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      db.update(managedTenants)
+      await db
+        .update(managedTenants)
         .set({
           status: 'error',
           lastHealthCheckAt: now,
@@ -262,20 +272,23 @@ export const testTenantConnectionFn = createServerFn({ method: 'POST' })
 export const generateAdminConsentLinkFn = createServerFn({
   method: 'POST',
 }).handler(async () => {
-  const session = requireRole('admin', undefined, 'tenant.generate_consent')
-  requireEntitlement('tenants.multi_tenant', session)
-  const { consentUrl } = createAdminConsentRequestUrl(session.upn, getRequest())
+  const session = await requireRole('admin', undefined, 'tenant.generate_consent')
+  await requireEntitlement('tenants.multi_tenant', session)
+  const { consentUrl } = await createAdminConsentRequestUrl(
+    session.upn,
+    getRequest(),
+  )
   return { consentUrl }
 })
 
 export const runCrossTenantPostureScanFn = createServerFn({
   method: 'POST',
 }).handler(async () => {
-  const session = requireRole('admin', undefined, 'tenant.cross_posture_scan')
-  requireEntitlement('tenants.multi_tenant', session)
-  enforceRateLimit('heavy', session.oid)
+  const session = await requireRole('admin', undefined, 'tenant.cross_posture_scan')
+  await requireEntitlement('tenants.multi_tenant', session)
+  await enforceRateLimitAsync('heavy', session.oid)
 
-  const tenants = listAllManagedTenants()
+  const tenants = await listAllManagedTenants()
   const db = getDb()
   const results: Array<{
     tenantId: string
@@ -288,15 +301,17 @@ export const runCrossTenantPostureScanFn = createServerFn({
   for (const t of tenants) {
     const now = Date.now()
     try {
+      const client = await getGraphClient(t.id)
       const [cis, mfaRes] = await Promise.all([
         collectCisScan(t.id),
-        getGraphClient(t.id)
+        client
           .listUserRegistrationDetails({ top: 500 })
           .then((r) => summarizeMfaCoverage(r.items).mfaCoveragePct)
           .catch(() => null),
       ])
 
-      db.update(managedTenants)
+      await db
+        .update(managedTenants)
         .set({
           lastCisScorePct: cis.summary.scorePct,
           lastMfaCoveragePct: mfaRes,
@@ -317,7 +332,8 @@ export const runCrossTenantPostureScanFn = createServerFn({
       })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      db.update(managedTenants)
+      await db
+        .update(managedTenants)
         .set({
           lastHealthCheckAt: now,
           lastHealthError: msg,
@@ -336,7 +352,7 @@ export const runCrossTenantPostureScanFn = createServerFn({
     }
   }
 
-  recordAuditLog({
+  await recordAuditLog({
     actorOid: session.oid,
     actorUpn: session.upn,
     actorRole: session.role,
@@ -358,10 +374,11 @@ const grantAccessSchema = z.object({
 export const grantTenantAccessFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => grantAccessSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('owner', undefined, 'tenant.grant_access')
+    const session = await requireRole('owner', undefined, 'tenant.grant_access')
     const db = getDb()
     const id = crypto.randomUUID()
-    db.insert(tenantAccess)
+    await db
+      .insert(tenantAccess)
       .values({
         id,
         principal: data.principal.trim().toLowerCase(),
@@ -371,7 +388,7 @@ export const grantTenantAccessFn = createServerFn({ method: 'POST' })
       })
       .run()
 
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -392,10 +409,10 @@ const revokeAccessSchema = z.object({
 export const revokeTenantAccessFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => revokeAccessSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('owner', undefined, 'tenant.revoke_access')
+    const session = await requireRole('owner', undefined, 'tenant.revoke_access')
     const db = getDb()
-    db.delete(tenantAccess).where(eq(tenantAccess.id, data.id)).run()
-    recordAuditLog({
+    await db.delete(tenantAccess).where(eq(tenantAccess.id, data.id)).run()
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,

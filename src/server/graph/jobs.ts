@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { asc, desc, eq } from 'drizzle-orm'
+import { getCloudflareEnv, scheduleBackgroundTask } from '~/server/cf/env'
 import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
 import { jobs, type JobRow, type JobStatus, type UserRole } from '~/server/db/schema'
@@ -123,24 +124,28 @@ export interface BulkJobResult {
   items: BulkItemOutcome[]
 }
 
-const POLL_INTERVAL_MS = 5_000
-
-let workerStarted = false
-let workerRunning = false
-let pollTimer: NodeJS.Timeout | null = null
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-export function enqueueJob(params: {
+async function dispatchJobExecution(jobId: string): Promise<void> {
+  const queue = getCloudflareEnv().POCKET365_QUEUE
+  if (queue) {
+    await queue.send({ kind: 'job', jobId })
+    return
+  }
+  // Cloudflare Free plan / local dev fallback: run inside ctx.waitUntil()
+  scheduleBackgroundTask(processJobById(jobId))
+}
+
+export async function enqueueJob(params: {
   type: JobType
   payload: JobPayload
   actor: JobActor
   ipAddress?: string | null
   maxAttempts?: number
   autoStartWorker?: boolean
-}): JobRow {
+}): Promise<JobRow> {
   const db = getDb()
   const now = Date.now()
   const row: JobRow = {
@@ -161,9 +166,9 @@ export function enqueueJob(params: {
     updatedAt: now,
   }
 
-  db.insert(jobs).values(row).run()
+  await db.insert(jobs).values(row).run()
 
-  recordAuditLog({
+  await recordAuditLog({
     actorOid: params.actor.oid,
     actorUpn: params.actor.upn,
     actorRole: params.actor.role,
@@ -175,17 +180,16 @@ export function enqueueJob(params: {
   })
 
   if (params.autoStartWorker !== false) {
-    ensureJobWorkerStarted()
-    triggerJobProcessing()
+    await dispatchJobExecution(row.id)
   }
 
   return row
 }
 
-export function listJobs(options: {
+export async function listJobs(options: {
   limit?: number
   status?: JobStatus | 'all'
-} = {}): JobRow[] {
+} = {}): Promise<JobRow[]> {
   const db = getDb()
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
   return db
@@ -201,18 +205,20 @@ export function listJobs(options: {
     .all()
 }
 
-export function getJobById(jobId: string): JobRow | null {
+export async function getJobById(jobId: string): Promise<JobRow | null> {
   const db = getDb()
-  return db.select().from(jobs).where(eq(jobs.id, jobId)).get() ?? null
+  return (
+    (await db.select().from(jobs).where(eq(jobs.id, jobId)).get()) ?? null
+  )
 }
 
-export function retryFailedJob(
+export async function retryFailedJob(
   jobId: string,
   actor: JobActor,
   ipAddress?: string | null,
-): JobRow {
+): Promise<JobRow> {
   const db = getDb()
-  const existing = getJobById(jobId)
+  const existing = await getJobById(jobId)
   if (!existing) {
     throw new Error('Job not found.')
   }
@@ -221,7 +227,8 @@ export function retryFailedJob(
   }
 
   const now = Date.now()
-  db.update(jobs)
+  await db
+    .update(jobs)
     .set({
       status: 'queued',
       error: null,
@@ -233,7 +240,7 @@ export function retryFailedJob(
     .where(eq(jobs.id, jobId))
     .run()
 
-  recordAuditLog({
+  await recordAuditLog({
     actorOid: actor.oid,
     actorUpn: actor.upn,
     actorRole: actor.role,
@@ -244,10 +251,10 @@ export function retryFailedJob(
     ipAddress: ipAddress ?? null,
   })
 
-  ensureJobWorkerStarted()
-  triggerJobProcessing()
+  await dispatchJobExecution(jobId)
 
-  return getJobById(jobId)!
+  const refreshed = await getJobById(jobId)
+  return refreshed!
 }
 
 async function executeJob(
@@ -473,42 +480,35 @@ async function executeJob(
   }
 }
 
-export async function processNextQueuedJob(
-  graphClient: MicrosoftGraphClient = getGraphClient(),
+async function runClaimedJob(
+  targetJob: JobRow,
+  graphClient: MicrosoftGraphClient,
   delayOverrideMs?: number,
 ): Promise<JobRow | null> {
   const db = getDb()
-  const nextJob = db
-    .select()
-    .from(jobs)
-    .where(eq(jobs.status, 'queued'))
-    .orderBy(asc(jobs.createdAt))
-    .limit(1)
-    .get()
-
-  if (!nextJob) return null
-
   const now = Date.now()
-  const nextAttempt = nextJob.attempts + 1
+  const nextAttempt = targetJob.attempts + 1
 
-  db.update(jobs)
+  await db
+    .update(jobs)
     .set({
       status: 'running',
       attempts: nextAttempt,
-      startedAt: nextJob.startedAt ?? now,
+      startedAt: targetJob.startedAt ?? now,
       updatedAt: now,
     })
-    .where(eq(jobs.id, nextJob.id))
+    .where(eq(jobs.id, targetJob.id))
     .run()
 
   try {
-    const settings = getRuntimeSettings()
+    const settings = await getRuntimeSettings()
     const delayMs = delayOverrideMs ?? settings.bulkJobDelayMs
-    const result = await executeJob(nextJob, graphClient, delayMs)
+    const result = await executeJob(targetJob, graphClient, delayMs)
     const finishedAt = Date.now()
     const allFailed = result.total > 0 && result.succeeded === 0
 
-    db.update(jobs)
+    await db
+      .update(jobs)
       .set({
         status: allFailed ? 'failed' : 'completed',
         resultJson: JSON.stringify(result),
@@ -518,15 +518,15 @@ export async function processNextQueuedJob(
         completedAt: finishedAt,
         updatedAt: finishedAt,
       })
-      .where(eq(jobs.id, nextJob.id))
+      .where(eq(jobs.id, targetJob.id))
       .run()
 
-    recordAuditLog({
-      actorOid: nextJob.actorOid,
-      actorUpn: nextJob.actorUpn,
-      actorRole: nextJob.actorRole,
-      action: `job.complete:${nextJob.type}`,
-      target: nextJob.id,
+    await recordAuditLog({
+      actorOid: targetJob.actorOid,
+      actorUpn: targetJob.actorUpn,
+      actorRole: targetJob.actorRole,
+      action: `job.complete:${targetJob.type}`,
+      target: targetJob.id,
       status: allFailed ? 'failure' : 'success',
       details: {
         total: result.total,
@@ -536,74 +536,74 @@ export async function processNextQueuedJob(
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    const canRetry = nextAttempt < nextJob.maxAttempts
+    const canRetry = nextAttempt < targetJob.maxAttempts
     const finishedAt = Date.now()
 
-    db.update(jobs)
+    await db
+      .update(jobs)
       .set({
         status: canRetry ? 'queued' : 'failed',
         error: message,
         completedAt: canRetry ? null : finishedAt,
         updatedAt: finishedAt,
       })
-      .where(eq(jobs.id, nextJob.id))
+      .where(eq(jobs.id, targetJob.id))
       .run()
 
     if (!canRetry) {
-      recordAuditLog({
-        actorOid: nextJob.actorOid,
-        actorUpn: nextJob.actorUpn,
-        actorRole: nextJob.actorRole,
-        action: `job.failed:${nextJob.type}`,
-        target: nextJob.id,
+      await recordAuditLog({
+        actorOid: targetJob.actorOid,
+        actorUpn: targetJob.actorUpn,
+        actorRole: targetJob.actorRole,
+        action: `job.failed:${targetJob.type}`,
+        target: targetJob.id,
         status: 'failure',
         details: { error: message, attempts: nextAttempt },
       })
     }
   }
 
-  return getJobById(nextJob.id)
+  return getJobById(targetJob.id)
 }
 
-export function triggerJobProcessing(): void {
-  if (workerRunning) return
-  workerRunning = true
-  setImmediate(async () => {
-    try {
-      while (true) {
-        const processed = await processNextQueuedJob()
-        if (!processed) break
-      }
-    } catch {
-      // Errors are persisted per-job; keep worker alive
-    } finally {
-      workerRunning = false
-    }
-  })
+export async function processJobById(
+  jobId: string,
+  explicitGraphClient?: MicrosoftGraphClient,
+  delayOverrideMs?: number,
+): Promise<JobRow | null> {
+  const job = await getJobById(jobId)
+  if (!job || job.status !== 'queued') return job
+  const graphClient = explicitGraphClient ?? (await getGraphClient())
+  return runClaimedJob(job, graphClient, delayOverrideMs)
 }
 
-export function ensureJobWorkerStarted(): void {
-  if (workerStarted) return
-  workerStarted = true
-
-  // Recover any jobs left in 'running' state after a container restart
+export async function processNextQueuedJob(
+  explicitGraphClient?: MicrosoftGraphClient,
+  delayOverrideMs?: number,
+): Promise<JobRow | null> {
   const db = getDb()
-  db.update(jobs)
-    .set({ status: 'queued', updatedAt: Date.now() })
-    .where(eq(jobs.status, 'running'))
-    .run()
+  const nextJob = await db
+    .select()
+    .from(jobs)
+    .where(eq(jobs.status, 'queued'))
+    .orderBy(asc(jobs.createdAt))
+    .limit(1)
+    .get()
 
-  pollTimer = setInterval(() => {
-    triggerJobProcessing()
-  }, POLL_INTERVAL_MS)
-  pollTimer.unref?.()
+  if (!nextJob) return null
+  const graphClient = explicitGraphClient ?? (await getGraphClient())
+  return runClaimedJob(nextJob, graphClient, delayOverrideMs)
 }
 
-export function stopJobWorker(): void {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
+/**
+ * Drains up to `maxJobs` pending queued jobs — invoked by Cloudflare Cron Triggers.
+ */
+export async function drainQueuedJobs(maxJobs = 10): Promise<number> {
+  let processedCount = 0
+  for (let i = 0; i < maxJobs; i++) {
+    const job = await processNextQueuedJob()
+    if (!job) break
+    processedCount++
   }
-  workerStarted = false
-  workerRunning = false
+  return processedCount
 }

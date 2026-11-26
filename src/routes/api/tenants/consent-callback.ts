@@ -16,7 +16,11 @@ export const Route = createFileRoute('/api/tenants/consent-callback')({
   server: {
     handlers: {
       GET: async ({ request }) => {
-        const auth = guardApiRole('admin', request, 'tenant.consent_callback')
+        const auth = await guardApiRole(
+          'admin',
+          request,
+          'tenant.consent_callback',
+        )
         if (!auth.ok) {
           return new Response(null, {
             status: 302,
@@ -46,15 +50,22 @@ export const Route = createFileRoute('/api/tenants/consent-callback')({
         }
 
         const db = getDb()
-        const tx = db
+        const tx = await db
           .select()
           .from(oidcStates)
           .where(eq(oidcStates.state, state))
           .get()
         if (tx) {
-          db.delete(oidcStates).where(eq(oidcStates.state, state)).run()
+          await db
+            .delete(oidcStates)
+            .where(eq(oidcStates.state, state))
+            .run()
         }
-        if (!tx || tx.codeVerifier !== 'admin_consent' || tx.expiresAt < Date.now()) {
+        if (
+          !tx ||
+          tx.codeVerifier !== 'admin_consent' ||
+          tx.expiresAt < Date.now()
+        ) {
           return new Response(null, {
             status: 302,
             headers: {
@@ -67,11 +78,12 @@ export const Route = createFileRoute('/api/tenants/consent-callback')({
         }
 
         try {
-          requireEntitlement('tenants.multi_tenant', auth.session)
-          const plan = getActivePlan()
-          const existingList = listAllManagedTenants()
+          await requireEntitlement('tenants.multi_tenant', auth.session)
+          const plan = await getActivePlan()
+          const existingList = await listAllManagedTenants()
           const already = existingList.find(
-            (t) => t.entraTenantId.toLowerCase() === entraTenantId.toLowerCase(),
+            (t) =>
+              t.entraTenantId.toLowerCase() === entraTenantId.toLowerCase(),
           )
 
           let record = already
@@ -84,7 +96,7 @@ export const Route = createFileRoute('/api/tenants/consent-callback')({
                 `Tenant quota reached (${plan.maxTenants} max on ${plan.tier} plan).`,
               )
             }
-            record = createManagedTenantRecord({
+            record = await createManagedTenantRecord({
               entraTenantId,
               displayName: `Tenant ${entraTenantId.slice(0, 8)}`,
               connectionMode: 'admin_consent',
@@ -94,14 +106,15 @@ export const Route = createFileRoute('/api/tenants/consent-callback')({
 
           // Probe Microsoft Graph /organization to auto-populate tenant display name & primary domain
           try {
-            const client = getGraphClient(record.id)
+            const client = await getGraphClient(record.id)
             const org = await client.getOrganization()
             if (org) {
               const primaryDomain =
                 org.verifiedDomains.find((d) => d.isDefault)?.name ||
                 org.verifiedDomains[0]?.name ||
                 ''
-              db.update(managedTenants)
+              await db
+                .update(managedTenants)
                 .set({
                   displayName: org.displayName || record.displayName,
                   primaryDomain,
@@ -114,7 +127,8 @@ export const Route = createFileRoute('/api/tenants/consent-callback')({
                 .run()
             }
           } catch (probeErr) {
-            db.update(managedTenants)
+            await db
+              .update(managedTenants)
               .set({
                 lastHealthCheckAt: Date.now(),
                 lastHealthError:
@@ -127,7 +141,7 @@ export const Route = createFileRoute('/api/tenants/consent-callback')({
               .run()
           }
 
-          recordAuditLog({
+          await recordAuditLog({
             actorOid: auth.session.oid,
             actorUpn: auth.session.upn,
             actorRole: auth.session.role,

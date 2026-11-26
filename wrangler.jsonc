@@ -1,0 +1,48 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pocket365",
+  "compatibility_date": "2025-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "DEPLOYMENT_MODE": "self_hosted",
+    "LICENSE_ENFORCEMENT": "off"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pocket365-db",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "POCKET365_KV",
+      "id": "00000000000000000000000000000000"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "POCKET365_R2",
+      "bucket_name": "pocket365-exports"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  }
+  // Optional (Cloudflare Workers Paid plan / SaaS mode):
+  // Uncomment to offload bulk jobs & cross-tenant scans to Cloudflare Queues.
+  // Without this binding, Pocket365 falls back to ctx.waitUntil() automatically
+  // so self-hosted deployments work on the Cloudflare Free plan as well.
+  // "queues": {
+  //   "producers": [
+  //     { "binding": "POCKET365_QUEUE", "queue": "pocket365-jobs" }
+  //   ],
+  //   "consumers": [
+  //     { "queue": "pocket365-jobs", "max_batch_size": 5, "max_retries": 3 }
+  //   ]
+  // }
+}

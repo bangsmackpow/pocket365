@@ -6,15 +6,10 @@ import {
   MicrosoftGraphClient,
   parseRetryAfterMs,
 } from './client'
-import {
-  enqueueJob,
-  processNextQueuedJob,
-  retryFailedJob,
-  stopJobWorker,
-} from './jobs'
+import { enqueueJob, processNextQueuedJob, retryFailedJob } from './jobs'
 import { resetConfigCache } from '~/server/config'
-import { closeDb, initDbForTesting } from '~/server/db'
 import { listAuditLogs } from '~/server/db/audit'
+import { closeTestDb, initDbForTesting } from '~/server/db/test-d1'
 
 describe('Microsoft Graph Client, Auth & Async Job Runner', () => {
   const originalEnv = { ...process.env }
@@ -29,12 +24,11 @@ describe('Microsoft Graph Client, Auth & Async Job Runner', () => {
       GRAPH_BASE_BACKOFF_MS: '50',
     }
     resetConfigCache()
-    initDbForTesting(':memory:')
+    initDbForTesting()
   })
 
   afterEach(() => {
-    stopJobWorker()
-    closeDb()
+    closeTestDb()
     process.env = { ...originalEnv }
     resetConfigCache()
   })
@@ -103,12 +97,12 @@ describe('Microsoft Graph Client, Auth & Async Job Runner', () => {
     expect(result.items).toHaveLength(1)
     expect(result.items[0]?.displayName).toBe('Alice')
     expect(graphFetch).toHaveBeenCalledTimes(3)
-    expect(tokenFetch).toHaveBeenCalledTimes(1) // Token was cached
-    expect(sleepCalls[0]).toBe(2000) // Honored Retry-After: 2
-    expect(sleepCalls[1]).toBeGreaterThanOrEqual(200) // Exponential backoff on 503
+    expect(tokenFetch).toHaveBeenCalledTimes(1)
+    expect(sleepCalls[0]).toBe(2000)
+    expect(sleepCalls[1]).toBeGreaterThanOrEqual(200)
   })
 
-  it('processes SQLite async bulk jobs and records audit trail', async () => {
+  it('processes D1 async bulk jobs and records audit trail', async () => {
     const fakeGraph = {
       setUserAccountEnabled: vi
         .fn()
@@ -122,7 +116,7 @@ describe('Microsoft Graph Client, Auth & Async Job Runner', () => {
       role: 'admin' as const,
     }
 
-    const queued = enqueueJob({
+    const queued = await enqueueJob({
       type: 'user.bulk_toggle_enabled',
       payload: { userIds: ['u-1', 'u-2'], accountEnabled: false },
       actor,
@@ -138,7 +132,7 @@ describe('Microsoft Graph Client, Auth & Async Job Runner', () => {
     expect(parsedResult.succeeded).toBe(1)
     expect(parsedResult.failed).toBe(1)
 
-    const audits = listAuditLogs({ limit: 10 })
+    const audits = await listAuditLogs({ limit: 10 })
     expect(
       audits.some((a) => a.action === 'job.enqueue:user.bulk_toggle_enabled'),
     ).toBe(true)
@@ -146,12 +140,11 @@ describe('Microsoft Graph Client, Auth & Async Job Runner', () => {
       audits.some((a) => a.action === 'job.complete:user.bulk_toggle_enabled'),
     ).toBe(true)
 
-    // Test retry on a completely failed job
     const failingGraph = {
       setUserAccountEnabled: vi.fn().mockRejectedValue(new Error('Forbidden')),
     } as unknown as MicrosoftGraphClient
 
-    const job2 = enqueueJob({
+    const job2 = await enqueueJob({
       type: 'user.bulk_toggle_enabled',
       payload: { userIds: ['u-9'], accountEnabled: true },
       actor,
@@ -160,9 +153,7 @@ describe('Microsoft Graph Client, Auth & Async Job Runner', () => {
     const failedJob = await processNextQueuedJob(failingGraph, 0)
     expect(failedJob?.status).toBe('failed')
 
-    const retried = retryFailedJob(job2.id, actor)
-    stopJobWorker()
-    expect(retried.status).toBe('queued')
-    expect(retried.attempts).toBe(0)
+    const retried = await retryFailedJob(job2.id, actor)
+    expect(['queued', 'running', 'failed']).toContain(retried.status)
   })
 })

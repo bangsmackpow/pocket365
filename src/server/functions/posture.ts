@@ -30,8 +30,8 @@ import { getClientIp } from '~/server/http/proxy'
 export const getSecureScoreAndAlertsFn = createServerFn({
   method: 'GET',
 }).handler(async () => {
-  requireSession()
-  const graph = getGraphClient()
+  await requireSession()
+  const graph = await getGraphClient()
 
   const [scoreOutcome, alertsOutcome] = await Promise.all([
     graph
@@ -82,31 +82,32 @@ export interface SerializableCaPolicy {
 export const getConditionalAccessDataFn = createServerFn({
   method: 'GET',
 }).handler(async () => {
-  requireSession()
+  await requireSession()
   const db = getDb()
-  const graph = getGraphClient()
+  const graph = await getGraphClient()
 
-  const snapshots = db
-    .select({
-      id: policySnapshots.id,
-      label: policySnapshots.label,
-      actorUpn: policySnapshots.actorUpn,
-      policyCount: policySnapshots.policyCount,
-      createdAt: policySnapshots.createdAt,
-    })
-    .from(policySnapshots)
-    .where(eq(policySnapshots.snapshotType, 'conditional_access'))
-    .orderBy(desc(policySnapshots.createdAt))
-    .limit(20)
-    .all()
-
-  const latestSnapshotRow = db
-    .select()
-    .from(policySnapshots)
-    .where(eq(policySnapshots.snapshotType, 'conditional_access'))
-    .orderBy(desc(policySnapshots.createdAt))
-    .limit(1)
-    .get()
+  const [snapshots, latestSnapshotRow] = await Promise.all([
+    db
+      .select({
+        id: policySnapshots.id,
+        label: policySnapshots.label,
+        actorUpn: policySnapshots.actorUpn,
+        policyCount: policySnapshots.policyCount,
+        createdAt: policySnapshots.createdAt,
+      })
+      .from(policySnapshots)
+      .where(eq(policySnapshots.snapshotType, 'conditional_access'))
+      .orderBy(desc(policySnapshots.createdAt))
+      .limit(20)
+      .all(),
+    db
+      .select()
+      .from(policySnapshots)
+      .where(eq(policySnapshots.snapshotType, 'conditional_access'))
+      .orderBy(desc(policySnapshots.createdAt))
+      .limit(1)
+      .get(),
+  ])
 
   try {
     const rawPolicies = await graph.listConditionalAccessPoliciesFull()
@@ -154,16 +155,17 @@ const createCaSnapshotSchema = z.object({
 export const createCaSnapshotFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => createCaSnapshotSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'ca.create_snapshot')
-    requireEntitlement('posture.ca_drift', session)
+    const session = await requireRole('admin', undefined, 'ca.create_snapshot')
+    await requireEntitlement('posture.ca_drift', session)
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
     const policies = await graph.listConditionalAccessPoliciesFull()
 
     const db = getDb()
     const id = crypto.randomUUID()
     const now = Date.now()
-    db.insert(policySnapshots)
+    await db
+      .insert(policySnapshots)
       .values({
         id,
         snapshotType: 'conditional_access',
@@ -175,7 +177,7 @@ export const createCaSnapshotFn = createServerFn({ method: 'POST' })
       })
       .run()
 
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -198,13 +200,13 @@ const toggleCaPolicySchema = z.object({
 export const setCaPolicyStateFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => toggleCaPolicySchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'ca.update_state')
+    const session = await requireRole('admin', undefined, 'ca.update_state')
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     try {
       await graph.setConditionalAccessPolicyState(data.policyId, data.state)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -216,7 +218,7 @@ export const setCaPolicyStateFn = createServerFn({ method: 'POST' })
       })
       return { ok: true }
     } catch (err) {
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -237,8 +239,8 @@ export const setCaPolicyStateFn = createServerFn({ method: 'POST' })
 export const getDevicesAndBitlockerFn = createServerFn({
   method: 'GET',
 }).handler(async () => {
-  requireSession()
-  const graph = getGraphClient()
+  await requireSession()
+  const graph = await getGraphClient()
 
   const [devicesOutcome, bitlockerOutcome] = await Promise.all([
     graph
@@ -282,9 +284,9 @@ const deviceActionSchema = z.object({
 export const runDeviceActionFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => deviceActionSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, `device.${data.action}`)
+    const session = await requireRole('admin', undefined, `device.${data.action}`)
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     try {
       if (data.action === 'sync') {
@@ -292,7 +294,7 @@ export const runDeviceActionFn = createServerFn({ method: 'POST' })
       } else {
         await graph.remoteLockManagedDevice(data.deviceId)
       }
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -304,7 +306,7 @@ export const runDeviceActionFn = createServerFn({ method: 'POST' })
       })
       return { ok: true }
     } catch (err) {
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -329,15 +331,15 @@ const revealBitlockerSchema = z.object({
 export const revealBitlockerKeyFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => revealBitlockerSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'bitlocker.reveal_key')
-    requireEntitlement('posture.devices_bitlocker', session)
+    const session = await requireRole('admin', undefined, 'bitlocker.reveal_key')
+    await requireEntitlement('posture.devices_bitlocker', session)
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     try {
       const recoveryKey = await graph.getBitlockerRecoveryKeyValue(data.keyId)
-      // Strictly audit access without storing the recovery key itself in SQLite
-      recordAuditLog({
+      // Strictly audit access without storing the recovery key itself in D1
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -349,7 +351,7 @@ export const revealBitlockerKeyFn = createServerFn({ method: 'POST' })
       })
       return { ok: true, key: recoveryKey }
     } catch (err) {
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -368,8 +370,8 @@ export const revealBitlockerKeyFn = createServerFn({ method: 'POST' })
 
 export const listRiskyUsersFn = createServerFn({ method: 'GET' }).handler(
   async () => {
-    requireSession()
-    const graph = getGraphClient()
+    await requireSession()
+    const graph = await getGraphClient()
     try {
       const users = await graph.listRiskyUsers(100)
       return {
@@ -396,9 +398,9 @@ const riskyUserActionSchema = z.object({
 export const runRiskyUserActionFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => riskyUserActionSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, `risky_user.${data.action}`)
+    const session = await requireRole('admin', undefined, `risky_user.${data.action}`)
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     try {
       if (data.action === 'confirm_compromised') {
@@ -406,7 +408,7 @@ export const runRiskyUserActionFn = createServerFn({ method: 'POST' })
       } else {
         await graph.dismissRiskyUser(data.userId)
       }
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -418,7 +420,7 @@ export const runRiskyUserActionFn = createServerFn({ method: 'POST' })
       })
       return { ok: true }
     } catch (err) {
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,

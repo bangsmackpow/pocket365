@@ -4,7 +4,6 @@ import { getRequest } from '@tanstack/react-start/server'
 import { desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import {
-  ensureAlertSchedulerStarted,
   recordAndDispatchAlert,
   runAutomatedAlertChecks,
 } from '~/server/alerts/engine'
@@ -15,7 +14,7 @@ import { recordAuditLog } from '~/server/db/audit'
 import { alertEvents, alertWebhooks } from '~/server/db/schema'
 import { getClientIp } from '~/server/http/proxy'
 import { decryptSecret, encryptSecret } from '~/server/security/crypto'
-import { enforceRateLimit } from '~/server/security/rate-limit'
+import { enforceRateLimitAsync } from '~/server/security/rate-limit'
 import { assertSafeWebhookUrl } from '~/server/security/ssrf'
 
 function maskWebhookUrl(storedUrl: string): string {
@@ -30,22 +29,22 @@ function maskWebhookUrl(storedUrl: string): string {
 
 export const getAlertsDashboardFn = createServerFn({ method: 'GET' }).handler(
   async () => {
-    const session = requireSession()
-    ensureAlertSchedulerStarted()
+    const session = await requireSession()
     const db = getDb()
 
-    const rawWebhooks = db
-      .select()
-      .from(alertWebhooks)
-      .orderBy(desc(alertWebhooks.createdAt))
-      .all()
-
-    const events = db
-      .select()
-      .from(alertEvents)
-      .orderBy(desc(alertEvents.createdAt))
-      .limit(100)
-      .all()
+    const [rawWebhooks, events] = await Promise.all([
+      db
+        .select()
+        .from(alertWebhooks)
+        .orderBy(desc(alertWebhooks.createdAt))
+        .all(),
+      db
+        .select()
+        .from(alertEvents)
+        .orderBy(desc(alertEvents.createdAt))
+        .limit(100)
+        .all(),
+    ])
 
     return {
       webhooks: rawWebhooks.map((w) => ({
@@ -56,7 +55,7 @@ export const getAlertsDashboardFn = createServerFn({ method: 'GET' }).handler(
         enabled: w.enabled === 1,
         createdBy: w.createdBy,
         createdAt: w.createdAt,
-        isAdminView: session.role === 'admin',
+        isAdminView: session.role === 'admin' || session.role === 'owner',
       })),
       events,
     }
@@ -77,15 +76,16 @@ const createWebhookSchema = z.object({
 export const addAlertWebhookFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => createWebhookSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'alerts.add_webhook')
-    requireEntitlement('alerts.webhooks', session)
+    const session = await requireRole('admin', undefined, 'alerts.add_webhook')
+    await requireEntitlement('alerts.webhooks', session)
     await assertSafeWebhookUrl(data.url.trim())
 
     const db = getDb()
     const now = Date.now()
     const id = crypto.randomUUID()
 
-    db.insert(alertWebhooks)
+    await db
+      .insert(alertWebhooks)
       .values({
         id,
         name: data.name.trim(),
@@ -98,7 +98,7 @@ export const addAlertWebhookFn = createServerFn({ method: 'POST' })
       })
       .run()
 
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -109,7 +109,6 @@ export const addAlertWebhookFn = createServerFn({ method: 'POST' })
       ipAddress: getClientIp(getRequest()),
     })
 
-    ensureAlertSchedulerStarted()
     return { ok: true, id }
   })
 
@@ -121,14 +120,15 @@ const toggleWebhookSchema = z.object({
 export const toggleAlertWebhookFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => toggleWebhookSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'alerts.toggle_webhook')
+    const session = await requireRole('admin', undefined, 'alerts.toggle_webhook')
     const db = getDb()
-    db.update(alertWebhooks)
+    await db
+      .update(alertWebhooks)
       .set({ enabled: data.enabled ? 1 : 0, updatedAt: Date.now() })
       .where(eq(alertWebhooks.id, data.id))
       .run()
 
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -149,11 +149,11 @@ const deleteWebhookSchema = z.object({
 export const deleteAlertWebhookFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => deleteWebhookSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'alerts.delete_webhook')
+    const session = await requireRole('admin', undefined, 'alerts.delete_webhook')
     const db = getDb()
-    db.delete(alertWebhooks).where(eq(alertWebhooks.id, data.id)).run()
+    await db.delete(alertWebhooks).where(eq(alertWebhooks.id, data.id)).run()
 
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -169,7 +169,7 @@ export const deleteAlertWebhookFn = createServerFn({ method: 'POST' })
 
 export const sendTestAlertFn = createServerFn({ method: 'POST' }).handler(
   async () => {
-    const session = requireRole('admin', undefined, 'alerts.test_webhook')
+    const session = await requireRole('admin', undefined, 'alerts.test_webhook')
     const res = await recordAndDispatchAlert(
       {
         ruleKey: 'manual_test',
@@ -182,7 +182,7 @@ export const sendTestAlertFn = createServerFn({ method: 'POST' }).handler(
       { skipDedupe: true },
     )
 
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -199,10 +199,10 @@ export const sendTestAlertFn = createServerFn({ method: 'POST' }).handler(
 
 export const runAlertChecksNowFn = createServerFn({ method: 'POST' }).handler(
   async () => {
-    const session = requireRole('admin', undefined, 'alerts.run_checks')
-    enforceRateLimit('heavy', session.oid)
+    const session = await requireRole('admin', undefined, 'alerts.run_checks')
+    await enforceRateLimitAsync('heavy', session.oid)
     const summary = await runAutomatedAlertChecks()
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,

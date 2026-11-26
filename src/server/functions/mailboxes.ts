@@ -2,7 +2,11 @@ import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { requireCapability, requireRole, requireSession } from '~/server/auth/guards'
+import {
+  requireCapability,
+  requireRole,
+  requireSession,
+} from '~/server/auth/guards'
 import { requireEntitlement } from '~/server/billing/entitlements'
 import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
@@ -24,7 +28,7 @@ import {
   type FriendlyGraphError,
 } from '~/server/graph/signin-errors'
 import { getClientIp } from '~/server/http/proxy'
-import { enforceRateLimit } from '~/server/security/rate-limit'
+import { enforceRateLimitAsync } from '~/server/security/rate-limit'
 
 const mailboxDetailSchema = z.object({
   userId: z.string().min(1),
@@ -33,8 +37,8 @@ const mailboxDetailSchema = z.object({
 export const getMailboxAuditFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => mailboxDetailSchema.parse(input))
   .handler(async ({ data }) => {
-    requireSession()
-    const graph = getGraphClient()
+    await requireSession()
+    const graph = await getGraphClient()
 
     const [settingsOutcome, rulesOutcome] = await Promise.all([
       graph
@@ -83,9 +87,13 @@ const updateAutoReplySchema = z.object({
 export const updateMailboxAutoReplyFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => updateAutoReplySchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireCapability('helpdesk.actions', undefined, 'mailbox.update_autoreply')
+    const session = await requireCapability(
+      'helpdesk.actions',
+      undefined,
+      'mailbox.update_autoreply',
+    )
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     try {
       const payload = {
@@ -110,7 +118,7 @@ export const updateMailboxAutoReplyFn = createServerFn({ method: 'POST' })
       }
 
       const updated = await graph.updateUserAutoReplies(data.userId, payload)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -126,7 +134,7 @@ export const updateMailboxAutoReplyFn = createServerFn({ method: 'POST' })
       })
       return { ok: true, settings: updated }
     } catch (err) {
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -153,13 +161,13 @@ const deleteInboxRuleSchema = z.object({
 export const deleteInboxRuleFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => deleteInboxRuleSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'mailbox.delete_rule')
+    const session = await requireRole('admin', undefined, 'mailbox.delete_rule')
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     try {
       await graph.deleteUserInboxRule(data.userId, data.ruleId)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -171,7 +179,7 @@ export const deleteInboxRuleFn = createServerFn({ method: 'POST' })
       })
       return { ok: true }
     } catch (err) {
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -197,10 +205,14 @@ const becSweepSchema = z.object({
 export const enqueueMailboxBecSweepFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => becSweepSchema.parse(input ?? {}))
   .handler(async ({ data }) => {
-    const session = requireCapability('audit.sweep', undefined, 'mailbox.bec_sweep')
-    requireEntitlement('mailboxes.bec_sweep', session)
-    enforceRateLimit('heavy', session.oid)
-    const job = enqueueJob({
+    const session = await requireCapability(
+      'audit.sweep',
+      undefined,
+      'mailbox.bec_sweep',
+    )
+    await requireEntitlement('mailboxes.bec_sweep', session)
+    await enforceRateLimitAsync('heavy', session.oid)
+    const job = await enqueueJob({
       type: 'mailbox.bec_sweep',
       payload: {
         onlyLicensed: data.onlyLicensed,
@@ -214,9 +226,9 @@ export const enqueueMailboxBecSweepFn = createServerFn({ method: 'POST' })
 
 export const getLatestBecSweepFn = createServerFn({ method: 'GET' }).handler(
   async () => {
-    requireSession()
+    await requireSession()
     const db = getDb()
-    const latest = db
+    const latest = await db
       .select()
       .from(jobs)
       .where(eq(jobs.type, 'mailbox.bec_sweep'))

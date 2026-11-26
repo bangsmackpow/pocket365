@@ -69,7 +69,7 @@ export const Route = createFileRoute('/api/billing/webhook')({
             ? resolveTierFromStripePriceId(priceId, cfg)
             : 'community'
 
-          persistLicenseState({
+          await persistLicenseState({
             source: 'stripe',
             tier,
             licensee: obj?.customer || 'Stripe Customer',
@@ -81,7 +81,7 @@ export const Route = createFileRoute('/api/billing/webhook')({
             updatedBy: 'stripe:webhook',
           })
 
-          recordAuditLog({
+          await recordAuditLog({
             actorOid: 'stripe',
             actorUpn: 'stripe:webhook',
             actorRole: 'system',
@@ -92,7 +92,7 @@ export const Route = createFileRoute('/api/billing/webhook')({
             ipAddress,
           })
         } else if (eventType === 'customer.subscription.deleted') {
-          persistLicenseState({
+          await persistLicenseState({
             source: 'stripe',
             tier: 'community',
             licensee: obj?.customer || 'Stripe Customer',
@@ -102,7 +102,7 @@ export const Route = createFileRoute('/api/billing/webhook')({
             updatedBy: 'stripe:webhook',
           })
 
-          recordAuditLog({
+          await recordAuditLog({
             actorOid: 'stripe',
             actorUpn: 'stripe:webhook',
             actorRole: 'system',

@@ -1,4 +1,4 @@
-import dns from 'node:dns/promises'
+import { dohDnsResolver } from '~/server/security/doh'
 
 export interface DomainEmailAuthAudit {
   domain: string
@@ -127,7 +127,7 @@ async function safeResolveCname(
 
 export async function auditDomainEmailAuth(
   domain: string,
-  resolver: DnsResolverLike = dns,
+  resolver: DnsResolverLike = dohDnsResolver,
 ): Promise<DomainEmailAuthAudit> {
   const [rootTxt, dmarcTxt, sel1, sel2] = await Promise.all([
     safeResolveTxt(resolver, domain),

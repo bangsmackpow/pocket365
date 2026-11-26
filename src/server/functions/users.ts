@@ -17,9 +17,11 @@ const listUsersInputSchema = z.object({
 export const listUsersFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => listUsersInputSchema.parse(input ?? {}))
   .handler(async ({ data }) => {
-    requireSession()
-    const settings = getRuntimeSettings()
-    const graph = getGraphClient()
+    await requireSession()
+    const [settings, graph] = await Promise.all([
+      getRuntimeSettings(),
+      getGraphClient(),
+    ])
 
     const [page, skus] = await Promise.all([
       graph.listUsers({
@@ -44,8 +46,8 @@ const getUserDetailSchema = z.object({
 export const getUserDetailFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => getUserDetailSchema.parse(input))
   .handler(async ({ data }) => {
-    requireSession()
-    const graph = getGraphClient()
+    await requireSession()
+    const graph = await getGraphClient()
     const [user, skus] = await Promise.all([
       graph.getUser(data.userId),
       graph.listSubscribedSkus(),
@@ -62,13 +64,13 @@ const toggleUserAccountSchema = z.object({
 export const toggleUserAccountFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => toggleUserAccountSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'user.toggle_enabled')
+    const session = await requireRole('admin', undefined, 'user.toggle_enabled')
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     try {
       await graph.setUserAccountEnabled(data.userId, data.accountEnabled)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -81,7 +83,7 @@ export const toggleUserAccountFn = createServerFn({ method: 'POST' })
       return { ok: true, accountEnabled: data.accountEnabled }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -109,9 +111,9 @@ const updateUserLicensesSchema = z.object({
 export const updateUserLicensesFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => updateUserLicensesSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'user.update_licenses')
+    const session = await requireRole('admin', undefined, 'user.update_licenses')
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     if (data.addSkuIds.length === 0 && data.removeSkuIds.length === 0) {
       throw new Error('Specify at least one license to assign or remove.')
@@ -130,7 +132,7 @@ export const updateUserLicensesFn = createServerFn({ method: 'POST' })
         data.addSkuIds,
         data.removeSkuIds,
       )
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -147,7 +149,7 @@ export const updateUserLicensesFn = createServerFn({ method: 'POST' })
       return { ok: true, user: updatedUser }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -174,8 +176,8 @@ const bulkToggleUsersSchema = z.object({
 export const enqueueBulkToggleUsersFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => bulkToggleUsersSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'user.bulk_toggle_enabled')
-    const job = enqueueJob({
+    const session = await requireRole('admin', undefined, 'user.bulk_toggle_enabled')
+    const job = await enqueueJob({
       type: 'user.bulk_toggle_enabled',
       payload: {
         userIds: data.userIds,
@@ -196,11 +198,11 @@ const bulkAssignLicenseSchema = z.object({
 export const enqueueBulkAssignLicenseFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => bulkAssignLicenseSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'user.bulk_assign_license')
+    const session = await requireRole('admin', undefined, 'user.bulk_assign_license')
     if (data.addSkuIds.length === 0 && data.removeSkuIds.length === 0) {
       throw new Error('Select at least one SKU to assign or remove.')
     }
-    const job = enqueueJob({
+    const job = await enqueueJob({
       type: 'user.bulk_assign_license',
       payload: {
         userIds: data.userIds,

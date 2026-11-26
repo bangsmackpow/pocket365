@@ -1,84 +1,57 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import Database from 'better-sqlite3'
-import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { getConfig } from '~/server/config'
+import { drizzle, type DrizzleD1Database } from 'drizzle-orm/d1'
+import { getCloudflareEnv } from '~/server/cf/env'
 import * as schema from './schema'
-import { runMigrations } from './migrate'
 
-export type Pocket365Db = BetterSQLite3Database<typeof schema>
+export type Pocket365Db = DrizzleD1Database<typeof schema>
 
-let sqliteInstance: Database.Database | null = null
-let dbInstance: Pocket365Db | null = null
-let activeDbPath: string | null = null
+let cachedD1Ref: D1Database | null = null
+let cachedDb: Pocket365Db | null = null
+let testD1Override: D1Database | null = null
 
-export function resolveDbPath(): string {
-  const cfg = getConfig()
-  return path.join(cfg.dataDir, 'pocket365.db')
+export function setTestD1(d1: D1Database | null): void {
+  testD1Override = d1
+  cachedD1Ref = null
+  cachedDb = null
 }
 
-function initializeDatabase(dbPath: string): {
-  sqlite: Database.Database
-  db: Pocket365Db
-} {
-  if (dbPath !== ':memory:') {
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true })
+export function getRawD1(): D1Database {
+  const d1 = testD1Override ?? getCloudflareEnv().DB
+  if (!d1) {
+    throw new Error(
+      'Cloudflare D1 binding "DB" is not available. Configure d1_databases in wrangler.jsonc or call initDbForTesting() in unit tests.',
+    )
   }
-
-  const sqlite = new Database(dbPath)
-  sqlite.pragma('journal_mode = WAL')
-  sqlite.pragma('busy_timeout = 5000')
-  sqlite.pragma('foreign_keys = ON')
-  sqlite.pragma('synchronous = NORMAL')
-
-  runMigrations(sqlite)
-
-  const db = drizzle(sqlite, { schema })
-  return { sqlite, db }
-}
-
-export function getSqlite(): Database.Database {
-  if (!sqliteInstance) {
-    const dbPath = activeDbPath ?? resolveDbPath()
-    const initialized = initializeDatabase(dbPath)
-    sqliteInstance = initialized.sqlite
-    dbInstance = initialized.db
-    activeDbPath = dbPath
-  }
-  return sqliteInstance
+  return d1
 }
 
 export function getDb(): Pocket365Db {
-  if (!dbInstance) {
-    getSqlite()
+  const d1 = getRawD1()
+  if (cachedDb && cachedD1Ref === d1) {
+    return cachedDb
   }
-  return dbInstance!
+  cachedD1Ref = d1
+  cachedDb = drizzle(d1, { schema })
+  return cachedDb
 }
 
-export function checkDatabaseHealth(): { ok: boolean; error?: string } {
+export async function checkDatabaseHealth(): Promise<{
+  ok: boolean
+  error?: string
+}> {
   try {
-    const sqlite = getSqlite()
-    const row = sqlite.prepare('SELECT 1 AS ok').get() as { ok: number } | undefined
+    const d1 = getRawD1()
+    const row = await d1.prepare('SELECT 1 AS ok').first<{ ok: number }>()
     return { ok: row?.ok === 1 }
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Database connectivity error',
+      error: err instanceof Error ? err.message : 'D1 connectivity error',
     }
   }
 }
 
 export function closeDb(): void {
-  if (sqliteInstance) {
-    sqliteInstance.close()
-    sqliteInstance = null
-    dbInstance = null
-    activeDbPath = null
-  }
-}
-
-export function initDbForTesting(dbPath = ':memory:'): Pocket365Db {
-  closeDb()
-  activeDbPath = dbPath
-  return getDb()
+  testD1Override = null
+  cachedD1Ref = null
+  cachedDb = null
 }

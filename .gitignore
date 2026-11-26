@@ -5,6 +5,7 @@ node_modules/
 .output/
 .nitro/
 .tanstack/
+.wrangler/
 dist/
 
 # Generated router tree
@@ -20,6 +21,7 @@ data/
 .env
 .env.local
 .env.*.local
+.dev.vars
 
 # Logs & OS files
 *.log

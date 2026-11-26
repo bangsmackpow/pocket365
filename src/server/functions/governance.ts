@@ -5,6 +5,7 @@ import { desc } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireRole, requireSession } from '~/server/auth/guards'
 import { requireEntitlement } from '~/server/billing/entitlements'
+import { putExportObject } from '~/server/cf/r2'
 import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
 import { cisSnapshots } from '~/server/db/schema'
@@ -30,10 +31,10 @@ async function waitMs(ms: number): Promise<void> {
 
 export const runCisBenchmarkScanFn = createServerFn({ method: 'GET' }).handler(
   async () => {
-    requireSession()
+    await requireSession()
     const scan = await collectCisScan()
     const db = getDb()
-    const history = db
+    const history = await db
       .select({
         id: cisSnapshots.id,
         actorUpn: cisSnapshots.actorUpn,
@@ -58,13 +59,14 @@ export const runCisBenchmarkScanFn = createServerFn({ method: 'GET' }).handler(
 
 export const saveCisSnapshotFn = createServerFn({ method: 'POST' }).handler(
   async () => {
-    const session = requireRole('admin', undefined, 'cis.save_snapshot')
+    const session = await requireRole('admin', undefined, 'cis.save_snapshot')
     const scan = await collectCisScan()
     const db = getDb()
     const id = crypto.randomUUID()
     const createdAt = Date.now()
 
-    db.insert(cisSnapshots)
+    await db
+      .insert(cisSnapshots)
       .values({
         id,
         actorUpn: session.upn,
@@ -78,18 +80,40 @@ export const saveCisSnapshotFn = createServerFn({ method: 'POST' }).handler(
       })
       .run()
 
-    recordAuditLog({
+    // Archive compliance report JSON to Cloudflare R2 (or memory fallback)
+    const r2Key = `exports/cis/cis-report-${id}.json`
+    await putExportObject({
+      key: r2Key,
+      body: JSON.stringify(
+        {
+          id,
+          createdAt: new Date(createdAt).toISOString(),
+          actorUpn: session.upn,
+          summary: scan.summary,
+          checks: scan.checks,
+        },
+        null,
+        2,
+      ),
+      contentType: 'application/json',
+      customMetadata: {
+        actorUpn: session.upn,
+        scorePct: String(scan.summary.scorePct),
+      },
+    })
+
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
       action: 'cis.save_snapshot',
       target: id,
       status: 'success',
-      details: scan.summary,
+      details: { ...scan.summary, r2Key },
       ipAddress: getClientIp(getRequest()),
     })
 
-    return { ok: true, id, scorePct: scan.summary.scorePct }
+    return { ok: true, id, scorePct: scan.summary.scorePct, r2Key }
   },
 )
 
@@ -136,10 +160,14 @@ const remediationSchema = z.object({
 export const applyCisRemediationFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => remediationSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, `cis.remediate:${data.remediationId}`)
-    requireEntitlement('cis.autofix', session)
+    const session = await requireRole(
+      'admin',
+      undefined,
+      `cis.remediate:${data.remediationId}`,
+    )
+    await requireEntitlement('cis.autofix', session)
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     const id: CisRemediationId = data.remediationId
     let summary = ''
@@ -272,7 +300,7 @@ export const applyCisRemediationFn = createServerFn({ method: 'POST' })
         refreshedScan.checks.find((c) => c.id === targetCheckId)?.status ===
         'pass'
 
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -293,7 +321,7 @@ export const applyCisRemediationFn = createServerFn({ method: 'POST' })
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -318,8 +346,8 @@ const listDirectoryAuditsSchema = z.object({
 export const listDirectoryAuditsFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => listDirectoryAuditsSchema.parse(input ?? {}))
   .handler(async ({ data }) => {
-    requireSession()
-    const graph = getGraphClient()
+    await requireSession()
+    const graph = await getGraphClient()
 
     try {
       const page = await graph.listDirectoryAudits({
@@ -363,8 +391,8 @@ export interface EnrichedDirectoryRole {
 
 export const listPrivilegedRolesFn = createServerFn({ method: 'GET' }).handler(
   async () => {
-    requireSession()
-    const graph = getGraphClient()
+    await requireSession()
+    const graph = await getGraphClient()
 
     try {
       const [roles, mfaMap] = await Promise.all([
@@ -389,7 +417,11 @@ export const listPrivilegedRolesFn = createServerFn({ method: 'GET' }).handler(
             mfaRegistered: mfaMap.has(m.id) ? (mfaMap.get(m.id) ?? null) : null,
           })),
         }))
-        .sort((a, b) => b.members.length - a.members.length || a.displayName.localeCompare(b.displayName))
+        .sort(
+          (a, b) =>
+            b.members.length - a.members.length ||
+            a.displayName.localeCompare(b.displayName),
+        )
 
       const globalAdmin = enriched.find(
         (r) =>
@@ -450,13 +482,13 @@ const modifyRoleMemberSchema = z.object({
 export const addRoleMemberFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => modifyRoleMemberSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'role.add_member')
+    const session = await requireRole('admin', undefined, 'role.add_member')
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     try {
       await graph.addDirectoryRoleMember(data.roleId, data.memberId)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -468,7 +500,7 @@ export const addRoleMemberFn = createServerFn({ method: 'POST' })
       })
       return { ok: true }
     } catch (err) {
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -489,7 +521,7 @@ export const addRoleMemberFn = createServerFn({ method: 'POST' })
 export const removeRoleMemberFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => modifyRoleMemberSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'role.remove_member')
+    const session = await requireRole('admin', undefined, 'role.remove_member')
     const ipAddress = getClientIp(getRequest())
 
     if (
@@ -501,10 +533,10 @@ export const removeRoleMemberFn = createServerFn({ method: 'POST' })
       )
     }
 
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
     try {
       await graph.removeDirectoryRoleMember(data.roleId, data.memberId)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -516,7 +548,7 @@ export const removeRoleMemberFn = createServerFn({ method: 'POST' })
       })
       return { ok: true }
     } catch (err) {
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,

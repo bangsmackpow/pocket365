@@ -71,7 +71,7 @@ export function getCanonicalBaseUrl(request?: Request): string {
     return cfg.appBaseUrl
   }
   const proto = getForwardedProto(request) || 'http'
-  const host = getForwardedHost(request) || request?.headers.get('host') || `localhost:${cfg.port}`
+  const host = getForwardedHost(request) || request?.headers.get('host') || 'localhost:3000'
   return `${proto}://${host}`.replace(/\/+$/, '')
 }
 

@@ -12,7 +12,11 @@ export default defineConfig({
     tailwindcss(),
     tanstackStart(),
     nitro({
-      preset: 'node-server',
+      preset: 'cloudflare-module',
+      cloudflare: {
+        deployConfig: true,
+        nodeCompat: true,
+      },
     }),
     viteReact(),
   ],

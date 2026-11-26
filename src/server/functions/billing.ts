@@ -14,9 +14,9 @@ import { getClientIp } from '~/server/http/proxy'
 
 export const getBillingStatusFn = createServerFn({ method: 'GET' }).handler(
   async () => {
-    requireSession()
+    await requireSession()
     const cfg = getConfig()
-    const plan = getActivePlan()
+    const plan = await getActivePlan()
 
     return {
       plan,
@@ -34,14 +34,14 @@ const applyLicenseKeySchema = z.object({
 export const applyLicenseKeyFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => applyLicenseKeySchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('owner', undefined, 'billing.apply_license')
+    const session = await requireRole('owner', undefined, 'billing.apply_license')
     const cfg = getConfig()
     const claims = await verifySignedLicenseKey(
       data.licenseKey,
       cfg.licensePublicKeyPem,
     )
 
-    persistLicenseState({
+    await persistLicenseState({
       source: 'license_key',
       tier: claims.tier,
       licensee: claims.licensee,
@@ -52,7 +52,7 @@ export const applyLicenseKeyFn = createServerFn({ method: 'POST' })
       updatedBy: session.upn,
     })
 
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -68,5 +68,5 @@ export const applyLicenseKeyFn = createServerFn({ method: 'POST' })
       ipAddress: getClientIp(getRequest()),
     })
 
-    return { ok: true, plan: getActivePlan() }
+    return { ok: true, plan: await getActivePlan() }
   })

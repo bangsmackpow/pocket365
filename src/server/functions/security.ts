@@ -1,7 +1,11 @@
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { z } from 'zod'
-import { requireCapability, requireRole, requireSession } from '~/server/auth/guards'
+import {
+  requireCapability,
+  requireRole,
+  requireSession,
+} from '~/server/auth/guards'
 import { requireEntitlement } from '~/server/billing/entitlements'
 import { recordAuditLog } from '~/server/db/audit'
 import {
@@ -20,7 +24,7 @@ import {
   type FriendlyGraphError,
 } from '~/server/graph/signin-errors'
 import { getClientIp } from '~/server/http/proxy'
-import { enforceRateLimit } from '~/server/security/rate-limit'
+import { enforceRateLimitAsync } from '~/server/security/rate-limit'
 
 const userIdInputSchema = z.object({
   userId: z.string().min(1),
@@ -29,8 +33,8 @@ const userIdInputSchema = z.object({
 export const getUserAuthMethodsFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => userIdInputSchema.parse(input))
   .handler(async ({ data }) => {
-    requireSession()
-    const graph = getGraphClient()
+    await requireSession()
+    const graph = await getGraphClient()
     try {
       const raw = await graph.listUserAuthenticationMethods(data.userId)
       return {
@@ -55,13 +59,17 @@ const revokeSessionsSchema = z.object({
 export const revokeUserSessionsFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => revokeSessionsSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireCapability('helpdesk.actions', undefined, 'user.revoke_sessions')
+    const session = await requireCapability(
+      'helpdesk.actions',
+      undefined,
+      'user.revoke_sessions',
+    )
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     try {
       await graph.revokeUserSignInSessions(data.userId)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -73,7 +81,7 @@ export const revokeUserSessionsFn = createServerFn({ method: 'POST' })
       })
       return { ok: true }
     } catch (err) {
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -100,9 +108,13 @@ const resetPasswordSchema = z.object({
 export const resetUserPasswordFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => resetPasswordSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireCapability('helpdesk.actions', undefined, 'user.reset_password')
+    const session = await requireCapability(
+      'helpdesk.actions',
+      undefined,
+      'user.reset_password',
+    )
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     const generated = !data.customPassword
     const newPassword = data.customPassword || generateStrongPassword(20)
@@ -113,8 +125,8 @@ export const resetUserPasswordFn = createServerFn({ method: 'POST' })
         newPassword,
         data.forceChangePasswordNextSignIn,
       )
-      // Never log the plaintext password in SQLite audit_logs
-      recordAuditLog({
+      // Never log the plaintext password in D1 audit_logs
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -134,7 +146,7 @@ export const resetUserPasswordFn = createServerFn({ method: 'POST' })
         forceChangePasswordNextSignIn: data.forceChangePasswordNextSignIn,
       }
     } catch (err) {
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -162,9 +174,13 @@ const deleteAuthMethodSchema = z.object({
 export const deleteUserAuthMethodFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => deleteAuthMethodSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireCapability('helpdesk.actions', undefined, 'user.delete_auth_method')
+    const session = await requireCapability(
+      'helpdesk.actions',
+      undefined,
+      'user.delete_auth_method',
+    )
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     try {
       await graph.deleteUserAuthenticationMethod(
@@ -172,7 +188,7 @@ export const deleteUserAuthMethodFn = createServerFn({ method: 'POST' })
         data.odataType,
         data.methodId,
       )
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -188,7 +204,7 @@ export const deleteUserAuthMethodFn = createServerFn({ method: 'POST' })
       })
       return { ok: true }
     } catch (err) {
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -217,9 +233,13 @@ const createTapSchema = z.object({
 export const createTemporaryAccessPassFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => createTapSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireCapability('helpdesk.actions', undefined, 'user.create_tap')
+    const session = await requireCapability(
+      'helpdesk.actions',
+      undefined,
+      'user.create_tap',
+    )
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     try {
       const created = await graph.createTemporaryAccessPass(data.userId, {
@@ -227,7 +247,7 @@ export const createTemporaryAccessPassFn = createServerFn({ method: 'POST' })
         isUsableOnce: data.isUsableOnce,
       })
       // Never persist the TAP secret value in audit_logs
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -248,7 +268,7 @@ export const createTemporaryAccessPassFn = createServerFn({ method: 'POST' })
         isUsableOnce: created.isUsableOnce ?? data.isUsableOnce,
       }
     } catch (err) {
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -280,9 +300,9 @@ const offboardUserSchema = z.object({
 export const enqueueUserOffboardingFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => offboardUserSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'user.offboard')
-    requireEntitlement('users.offboarding', session)
-    enforceRateLimit('heavy', session.oid)
+    const session = await requireRole('admin', undefined, 'user.offboard')
+    await requireEntitlement('users.offboarding', session)
+    await enforceRateLimitAsync('heavy', session.oid)
     if (
       !data.disableAccount &&
       !data.revokeSessions &&
@@ -294,7 +314,7 @@ export const enqueueUserOffboardingFn = createServerFn({ method: 'POST' })
       throw new Error('Select at least one offboarding or lockout action.')
     }
 
-    const job = enqueueJob({
+    const job = await enqueueJob({
       type: 'user.offboard',
       payload: data,
       actor: { oid: session.oid, upn: session.upn, role: session.role },
@@ -311,8 +331,8 @@ const mfaReportInputSchema = z.object({
 export const getMfaCoverageReportFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => mfaReportInputSchema.parse(input ?? {}))
   .handler(async ({ data }) => {
-    requireSession()
-    const graph = getGraphClient()
+    await requireSession()
+    const graph = await getGraphClient()
 
     try {
       const page = await graph.listUserRegistrationDetails({

@@ -35,7 +35,7 @@ export function hashSessionToken(rawToken: string): string {
   return crypto.createHash('sha256').update(rawToken, 'utf8').digest('hex')
 }
 
-export function createSession(params: {
+export async function createSession(params: {
   userOid: string
   userUpn: string
   displayName: string
@@ -43,19 +43,20 @@ export function createSession(params: {
   groups: string[]
   ipAddress?: string | null
   userAgent?: string | null
-}): { rawToken: string; session: SessionUser } {
+}): Promise<{ rawToken: string; session: SessionUser }> {
   const cfg = getConfig()
   const db = getDb()
   const now = Date.now()
   const expiresAt = now + cfg.sessionTtlHours * 60 * 60 * 1000
 
   // Opportunistic cleanup of expired sessions
-  db.delete(sessions).where(lt(sessions.expiresAt, now)).run()
+  await db.delete(sessions).where(lt(sessions.expiresAt, now)).run()
 
   const rawToken = crypto.randomBytes(32).toString('base64url')
   const id = hashSessionToken(rawToken)
 
-  db.insert(sessions)
+  await db
+    .insert(sessions)
     .values({
       id,
       userOid: params.userOid,
@@ -86,23 +87,26 @@ export function createSession(params: {
   }
 }
 
-export function getSessionByRawToken(rawToken: string | undefined): SessionUser | null {
+export async function getSessionByRawToken(
+  rawToken: string | undefined,
+): Promise<SessionUser | null> {
   if (!rawToken) return null
   const db = getDb()
   const id = hashSessionToken(rawToken)
-  const row = db.select().from(sessions).where(eq(sessions.id, id)).get()
+  const row = await db.select().from(sessions).where(eq(sessions.id, id)).get()
   if (!row) return null
 
   const now = Date.now()
   const cfg = getConfig()
   const idleLimitMs = cfg.sessionIdleTimeoutMinutes * 60 * 1000
   if (row.expiresAt <= now || now - row.lastSeenAt > idleLimitMs) {
-    db.delete(sessions).where(eq(sessions.id, id)).run()
+    await db.delete(sessions).where(eq(sessions.id, id)).run()
     return null
   }
 
   if (now - row.lastSeenAt > LAST_SEEN_UPDATE_INTERVAL_MS) {
-    db.update(sessions)
+    await db
+      .update(sessions)
       .set({ lastSeenAt: now })
       .where(eq(sessions.id, id))
       .run()
@@ -130,31 +134,35 @@ export function getSessionByRawToken(rawToken: string | undefined): SessionUser 
   }
 }
 
-export function getSessionFromRequest(request?: Request): SessionUser | null {
+export async function getSessionFromRequest(
+  request?: Request,
+): Promise<SessionUser | null> {
   if (!request) return null
   const cookies = parseCookies(request.headers.get('cookie'))
   return getSessionByRawToken(cookies[SESSION_COOKIE_NAME])
 }
 
-export function destroySessionFromRequest(request?: Request): SessionUser | null {
+export async function destroySessionFromRequest(
+  request?: Request,
+): Promise<SessionUser | null> {
   if (!request) return null
   const cookies = parseCookies(request.headers.get('cookie'))
   const rawToken = cookies[SESSION_COOKIE_NAME]
   if (!rawToken) return null
 
-  const session = getSessionByRawToken(rawToken)
+  const session = await getSessionByRawToken(rawToken)
   const id = hashSessionToken(rawToken)
   const db = getDb()
-  db.delete(sessions).where(eq(sessions.id, id)).run()
+  await db.delete(sessions).where(eq(sessions.id, id)).run()
   return session
 }
 
-export function listActiveSessions(onlyUserOid?: string) {
+export async function listActiveSessions(onlyUserOid?: string) {
   const db = getDb()
   const now = Date.now()
-  db.delete(sessions).where(lt(sessions.expiresAt, now)).run()
+  await db.delete(sessions).where(lt(sessions.expiresAt, now)).run()
 
-  const rows = db
+  return db
     .select({
       id: sessions.id,
       userOid: sessions.userOid,
@@ -172,25 +180,23 @@ export function listActiveSessions(onlyUserOid?: string) {
     .orderBy(desc(sessions.lastSeenAt))
     .limit(100)
     .all()
-
-  return rows
 }
 
-export function revokeSessionById(sessionId: string): void {
+export async function revokeSessionById(sessionId: string): Promise<void> {
   const db = getDb()
-  db.delete(sessions).where(eq(sessions.id, sessionId)).run()
+  await db.delete(sessions).where(eq(sessions.id, sessionId)).run()
 }
 
-export function revokeOtherUserSessions(
+export async function revokeOtherUserSessions(
   userOid: string,
   keepSessionId: string,
-): number {
+): Promise<number> {
   const db = getDb()
-  const res = db
+  const res = await db
     .delete(sessions)
     .where(and(eq(sessions.userOid, userOid), ne(sessions.id, keepSessionId)))
     .run()
-  return res.changes
+  return res.meta?.changes ?? 0
 }
 
 export function buildSessionCookieHeader(

@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import { exportPKCS8, exportSPKI, generateKeyPair } from 'jose'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resetConfigCache } from '~/server/config'
-import { closeDb, initDbForTesting } from '~/server/db'
+import { closeTestDb, initDbForTesting } from '~/server/db/test-d1'
 import {
   EntitlementHttpError,
   getActivePlan,
@@ -27,40 +27,40 @@ describe('Phase 3 Tier Entitlements, Ed25519 Licensing & Stripe Webhooks', () =>
       POCKET365_TIER: 'community',
     }
     resetConfigCache()
-    initDbForTesting(':memory:')
+    initDbForTesting()
   })
 
   afterEach(() => {
-    closeDb()
+    closeTestDb()
     process.env = { ...originalEnv }
     resetConfigCache()
   })
 
-  it('enforces tier entitlements strictly when LICENSE_ENFORCEMENT=strict and allows all when off', () => {
-    expect(() => requireEntitlement('core.signins')).not.toThrow()
-    expect(() => requireEntitlement('cis.autofix')).toThrowError(
+  it('enforces tier entitlements strictly when LICENSE_ENFORCEMENT=strict and allows all when off', async () => {
+    await expect(requireEntitlement('core.signins')).resolves.toBeTruthy()
+    await expect(requireEntitlement('cis.autofix')).rejects.toThrowError(
       EntitlementHttpError,
     )
-    expect(() => requireEntitlement('tenants.multi_tenant')).toThrowError(
+    await expect(requireEntitlement('tenants.multi_tenant')).rejects.toThrowError(
       EntitlementHttpError,
     )
 
     // Upgrade stored plan to pro
-    persistLicenseState({
+    await persistLicenseState({
       source: 'license_key',
       tier: 'pro',
       licensee: 'Contoso IT',
       updatedBy: 'admin@contoso.com',
     })
-    expect(() => requireEntitlement('cis.autofix')).not.toThrow()
-    expect(() => requireEntitlement('tenants.multi_tenant')).toThrowError(
+    await expect(requireEntitlement('cis.autofix')).resolves.toBeTruthy()
+    await expect(requireEntitlement('tenants.multi_tenant')).rejects.toThrowError(
       EntitlementHttpError,
     )
 
-    // Self-hosted open mode (default) allows everything cleanly
+    // Open mode allows everything cleanly
     process.env.LICENSE_ENFORCEMENT = 'off'
     resetConfigCache()
-    expect(() => requireEntitlement('tenants.multi_tenant')).not.toThrow()
+    await expect(requireEntitlement('tenants.multi_tenant')).resolves.toBeTruthy()
   })
 
   it('issues and verifies Ed25519-signed offline license keys and rejects tampering', async () => {
@@ -86,11 +86,10 @@ describe('Phase 3 Tier Entitlements, Ed25519 Licensing & Stripe Webhooks', () =>
     expect(verified.licensee).toBe('MSP Partners LLC')
     expect(verified.maxTenants).toBe(100)
 
-    // Tampered token must fail verification
     const tampered = `${token.slice(0, -4)}AAAA`
     await expect(verifySignedLicenseKey(tampered, pubPem)).rejects.toThrow()
 
-    persistLicenseState({
+    await persistLicenseState({
       source: 'license_key',
       tier: verified.tier,
       licensee: verified.licensee,
@@ -100,8 +99,9 @@ describe('Phase 3 Tier Entitlements, Ed25519 Licensing & Stripe Webhooks', () =>
       expiresAt: verified.expiresAt,
       updatedBy: 'owner@msp.com',
     })
-    expect(getActivePlan().tier).toBe('enterprise')
-    expect(getActivePlan().maxTenants).toBe(100)
+    const plan = await getActivePlan()
+    expect(plan.tier).toBe('enterprise')
+    expect(plan.maxTenants).toBe(100)
   })
 
   it('verifies Stripe HMAC-SHA256 webhook signatures and resolves price IDs', () => {
@@ -114,19 +114,33 @@ describe('Phase 3 Tier Entitlements, Ed25519 Licensing & Stripe Webhooks', () =>
       .digest('hex')
 
     expect(
-      verifyStripeWebhookSignature(payload, `t=${ts},v1=${sig}`, secret, 300, ts + 10)
-        .ok,
+      verifyStripeWebhookSignature(
+        payload,
+        `t=${ts},v1=${sig}`,
+        secret,
+        300,
+        ts + 10,
+      ).ok,
     ).toBe(true)
 
     expect(
-      verifyStripeWebhookSignature(payload, `t=${ts},v1=deadbeef`, secret, 300, ts + 10)
-        .ok,
+      verifyStripeWebhookSignature(
+        payload,
+        `t=${ts},v1=deadbeef`,
+        secret,
+        300,
+        ts + 10,
+      ).ok,
     ).toBe(false)
 
-    // Expired timestamp (>300s) rejected
     expect(
-      verifyStripeWebhookSignature(payload, `t=${ts},v1=${sig}`, secret, 300, ts + 600)
-        .ok,
+      verifyStripeWebhookSignature(
+        payload,
+        `t=${ts},v1=${sig}`,
+        secret,
+        300,
+        ts + 600,
+      ).ok,
     ).toBe(false)
 
     expect(

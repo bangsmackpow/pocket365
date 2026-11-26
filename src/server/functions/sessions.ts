@@ -14,10 +14,12 @@ import { getClientIp } from '~/server/http/proxy'
 
 export const getSecurityCenterDataFn = createServerFn({ method: 'GET' }).handler(
   async () => {
-    const session = requireSession()
+    const session = await requireSession()
     const cfg = getConfig()
     const isAdmin = isAdminRole(session.role)
-    const activeSessions = listActiveSessions(isAdmin ? undefined : session.oid)
+    const activeSessions = await listActiveSessions(
+      isAdmin ? undefined : session.oid,
+    )
 
     return {
       currentSessionId: session.sessionId,
@@ -47,9 +49,9 @@ const revokeSessionSchema = z.object({
 export const revokeSessionFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => revokeSessionSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'session.revoke')
-    revokeSessionById(data.sessionId)
-    recordAuditLog({
+    const session = await requireRole('admin', undefined, 'session.revoke')
+    await revokeSessionById(data.sessionId)
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -64,9 +66,9 @@ export const revokeSessionFn = createServerFn({ method: 'POST' })
 
 export const revokeMyOtherSessionsFn = createServerFn({ method: 'POST' }).handler(
   async () => {
-    const session = requireSession()
-    const count = revokeOtherUserSessions(session.oid, session.sessionId)
-    recordAuditLog({
+    const session = await requireSession()
+    const count = await revokeOtherUserSessions(session.oid, session.sessionId)
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,

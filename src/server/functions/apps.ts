@@ -20,8 +20,8 @@ import { getClientIp } from '~/server/http/proxy'
 
 export const listAppsAndGrantsFn = createServerFn({ method: 'GET' }).handler(
   async () => {
-    requireSession()
-    const graph = getGraphClient()
+    await requireSession()
+    const graph = await getGraphClient()
 
     const [appsOutcome, grantsOutcome] = await Promise.all([
       graph
@@ -81,13 +81,13 @@ const revokeGrantSchema = z.object({
 export const revokeOAuthGrantFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => revokeGrantSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'oauth.revoke_grant')
+    const session = await requireRole('admin', undefined, 'oauth.revoke_grant')
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     try {
       await graph.deleteOAuth2PermissionGrant(data.grantId)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -99,7 +99,7 @@ export const revokeOAuthGrantFn = createServerFn({ method: 'POST' })
       })
       return { ok: true }
     } catch (err) {
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -123,8 +123,8 @@ const staleAuditSchema = z.object({
 export const getStaleAccountsAuditFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => staleAuditSchema.parse(input ?? {}))
   .handler(async ({ data }) => {
-    requireSession()
-    const graph = getGraphClient()
+    await requireSession()
+    const graph = await getGraphClient()
 
     try {
       const [{ users, hasSignInActivityField }, skus] = await Promise.all([

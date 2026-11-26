@@ -3,6 +3,8 @@ import {
   setResponseHeader,
   setResponseStatus,
 } from '@tanstack/react-start/server'
+import { getCloudflareEnv } from '~/server/cf/env'
+import { kvGetJson, kvPutJson } from '~/server/cf/kv'
 import { getClientIp } from '~/server/http/proxy'
 
 export type RateLimitBucket = 'auth' | 'api' | 'mutation' | 'heavy'
@@ -116,6 +118,56 @@ export function checkRateLimit(
   return limiter.check(`${bucket}:${subjectKey}`, cfg.limit, cfg.windowMs, nowMs)
 }
 
+/**
+ * Edge-distributed rate limit check backed by Cloudflare KV (`POCKET365_KV`)
+ * when bound, falling back to isolate-local sliding-window memory limiter.
+ */
+export async function checkRateLimitAsync(
+  bucket: RateLimitBucket,
+  subjectKey: string,
+  override?: Partial<BucketConfig>,
+  nowMs = Date.now(),
+): Promise<RateLimitResult> {
+  const cfg = {
+    ...DEFAULT_BUCKETS[bucket],
+    ...override,
+  }
+
+  if (!getCloudflareEnv().POCKET365_KV) {
+    return limiter.check(`${bucket}:${subjectKey}`, cfg.limit, cfg.windowMs, nowMs)
+  }
+
+  const kvKey = `rl:${bucket}:${subjectKey}`
+  const cutoff = nowMs - cfg.windowMs
+  const stored = (await kvGetJson<number[]>(kvKey)) ?? []
+  const existing = stored.filter((ts) => ts > cutoff)
+
+  if (existing.length >= cfg.limit) {
+    const oldest = existing[0] ?? nowMs
+    const resetAt = oldest + cfg.windowMs
+    const retryAfterSeconds = Math.max(1, Math.ceil((resetAt - nowMs) / 1000))
+    return {
+      allowed: false,
+      limit: cfg.limit,
+      remaining: 0,
+      resetAt,
+      retryAfterSeconds,
+    }
+  }
+
+  existing.push(nowMs)
+  const ttlSec = Math.max(60, Math.ceil(cfg.windowMs / 1000))
+  await kvPutJson(kvKey, existing, ttlSec)
+
+  return {
+    allowed: true,
+    limit: cfg.limit,
+    remaining: Math.max(0, cfg.limit - existing.length),
+    resetAt: nowMs + cfg.windowMs,
+    retryAfterSeconds: 0,
+  }
+}
+
 export function enforceRateLimit(
   bucket: RateLimitBucket,
   subjectKey?: string,
@@ -132,6 +184,36 @@ export function enforceRateLimit(
 
   const key = subjectKey || getClientIp(req) || 'unknown'
   const res = checkRateLimit(bucket, key)
+
+  if (!res.allowed) {
+    try {
+      setResponseStatus(429)
+      setResponseHeader('Retry-After', String(res.retryAfterSeconds))
+    } catch {
+      // Outside TanStack Start server request context
+    }
+    throw new RateLimitHttpError(res.retryAfterSeconds)
+  }
+
+  return res
+}
+
+export async function enforceRateLimitAsync(
+  bucket: RateLimitBucket,
+  subjectKey?: string,
+  explicitRequest?: Request,
+): Promise<RateLimitResult> {
+  let req = explicitRequest
+  if (!req) {
+    try {
+      req = getRequest()
+    } catch {
+      req = undefined
+    }
+  }
+
+  const key = subjectKey || getClientIp(req) || 'unknown'
+  const res = await checkRateLimitAsync(bucket, key)
 
   if (!res.allowed) {
     try {

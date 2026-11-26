@@ -13,18 +13,19 @@ import {
   type GraphOrganization,
   type GraphSubscribedSku,
 } from '~/server/graph/client'
-import { ensureJobWorkerStarted, listJobs } from '~/server/graph/jobs'
+import { listJobs } from '~/server/graph/jobs'
 import { getClientIp } from '~/server/http/proxy'
 
 export const getDashboardDataFn = createServerFn({ method: 'GET' }).handler(
   async () => {
-    requireSession()
-    ensureJobWorkerStarted()
+    await requireSession()
 
     const readiness = getConfigReadiness()
-    const settings = getRuntimeSettings()
-    const recentAudits = listAuditLogs({ limit: 8 })
-    const recentJobs = listJobs({ limit: 8 })
+    const [settings, recentAudits, recentJobs] = await Promise.all([
+      getRuntimeSettings(),
+      listAuditLogs({ limit: 8 }),
+      listJobs({ limit: 8 }),
+    ])
 
     let organization: GraphOrganization | null = null
     let subscribedSkus: GraphSubscribedSku[] = []
@@ -32,7 +33,7 @@ export const getDashboardDataFn = createServerFn({ method: 'GET' }).handler(
 
     if (readiness.graphConfigured) {
       try {
-        const graph = getGraphClient()
+        const graph = await getGraphClient()
         const [org, skus] = await Promise.all([
           graph.getOrganization(),
           graph.listSubscribedSkus(),
@@ -47,7 +48,7 @@ export const getDashboardDataFn = createServerFn({ method: 'GET' }).handler(
       }
     } else {
       graphError =
-        'Microsoft Graph app-only credentials are not yet configured in environment variables.'
+        'Microsoft Graph app-only credentials are not yet configured.'
     }
 
     return {
@@ -65,10 +66,10 @@ export const getDashboardDataFn = createServerFn({ method: 'GET' }).handler(
 export const updateRuntimeSettingsFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => runtimeSettingsSchema.partial().parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'settings.update')
-    const updated = updateRuntimeSettings(data, session.upn)
+    const session = await requireRole('admin', undefined, 'settings.update')
+    const updated = await updateRuntimeSettings(data, session.upn)
 
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,

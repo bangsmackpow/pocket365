@@ -2,8 +2,9 @@ import crypto from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createSession } from '~/server/auth/session'
 import { resetConfigCache } from '~/server/config'
-import { closeDb, getDb, initDbForTesting } from '~/server/db'
+import { getDb } from '~/server/db'
 import { tenantAccess } from '~/server/db/schema'
+import { closeTestDb, initDbForTesting } from '~/server/db/test-d1'
 import { GraphTokenProvider } from '~/server/graph/auth'
 import { clearAllTenantGraphClients } from '~/server/graph/client'
 import { isEncryptedValue } from '~/server/security/crypto'
@@ -34,22 +35,22 @@ describe('Phase 4 Multi-Tenant Isolation, Encryption & Access Scoping', () => {
     }
     resetConfigCache()
     clearAllTenantGraphClients()
-    initDbForTesting(':memory:')
+    initDbForTesting()
   })
 
   afterEach(() => {
     clearAllTenantGraphClients()
-    closeDb()
+    closeTestDb()
     process.env = { ...originalEnv }
     resetConfigCache()
   })
 
-  it('auto-seeds primary tenant from ENTRA_TENANT_ID and encrypts customer secrets', () => {
-    const primary = ensurePrimaryTenantSeeded()
+  it('auto-seeds primary tenant from ENTRA_TENANT_ID and encrypts customer secrets', async () => {
+    const primary = await ensurePrimaryTenantSeeded()
     expect(primary?.entraTenantId).toBe(PRIMARY_TENANT)
     expect(primary?.isPrimary).toBe(1)
 
-    const custA = createManagedTenantRecord({
+    const custA = await createManagedTenantRecord({
       entraTenantId: CUSTOMER_TENANT_A,
       displayName: 'Acme Corp',
       primaryDomain: 'acme.com',
@@ -59,12 +60,10 @@ describe('Phase 4 Multi-Tenant Isolation, Encryption & Access Scoping', () => {
       createdBy: 'owner@msp.com',
     })
 
-    // Stored secret must be AES-256-GCM encrypted in SQLite
     expect(custA.clientSecretEnc).toBeTruthy()
     expect(isEncryptedValue(custA.clientSecretEnc!)).toBe(true)
     expect(custA.clientSecretEnc).not.toContain('acme-super-secret')
 
-    // Decrypted credentials match only Tenant A
     const credsA = resolveTenantGraphCredentials(custA)
     expect(credsA.entraTenantId).toBe(CUSTOMER_TENANT_A)
     expect(credsA.clientId).toBe('acme-client-id')
@@ -72,7 +71,7 @@ describe('Phase 4 Multi-Tenant Isolation, Encryption & Access Scoping', () => {
   })
 
   it('isolates Graph OAuth tokens strictly per tenant', async () => {
-    const custA = createManagedTenantRecord({
+    const custA = await createManagedTenantRecord({
       entraTenantId: CUSTOMER_TENANT_A,
       displayName: 'Tenant A',
       connectionMode: 'app_credentials',
@@ -80,7 +79,7 @@ describe('Phase 4 Multi-Tenant Isolation, Encryption & Access Scoping', () => {
       clientSecret: 'secret-a',
       createdBy: 'owner@msp.com',
     })
-    const custB = createManagedTenantRecord({
+    const custB = await createManagedTenantRecord({
       entraTenantId: CUSTOMER_TENANT_B,
       displayName: 'Tenant B',
       connectionMode: 'app_credentials',
@@ -120,22 +119,22 @@ describe('Phase 4 Multi-Tenant Isolation, Encryption & Access Scoping', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
-  it('enforces per-tenant technician access scoping and active tenant switching', () => {
-    ensurePrimaryTenantSeeded()
-    const custA = createManagedTenantRecord({
+  it('enforces per-tenant technician access scoping and active tenant switching', async () => {
+    await ensurePrimaryTenantSeeded()
+    const custA = await createManagedTenantRecord({
       entraTenantId: CUSTOMER_TENANT_A,
       displayName: 'Tenant A',
       connectionMode: 'admin_consent',
       createdBy: 'owner@msp.com',
     })
-    const custB = createManagedTenantRecord({
+    const custB = await createManagedTenantRecord({
       entraTenantId: CUSTOMER_TENANT_B,
       displayName: 'Tenant B',
       connectionMode: 'admin_consent',
       createdBy: 'owner@msp.com',
     })
 
-    const { session: techSession } = createSession({
+    const { session: techSession } = await createSession({
       userOid: 'tech-oid-1',
       userUpn: 'tech@msp.com',
       displayName: 'Tech One',
@@ -143,8 +142,7 @@ describe('Phase 4 Multi-Tenant Isolation, Encryption & Access Scoping', () => {
       groups: [],
     })
 
-    // Grant tech access ONLY to Tenant A
-    getDb()
+    await getDb()
       .insert(tenantAccess)
       .values({
         id: crypto.randomUUID(),
@@ -155,18 +153,17 @@ describe('Phase 4 Multi-Tenant Isolation, Encryption & Access Scoping', () => {
       })
       .run()
 
-    const visible = listAccessibleTenants(techSession)
+    const visible = await listAccessibleTenants(techSession)
     expect(visible.map((t) => t.id)).toEqual([custA.id])
-    expect(canAccessTenant(techSession, custA.id)).toBe(true)
-    expect(canAccessTenant(techSession, custB.id)).toBe(false)
+    expect(await canAccessTenant(techSession, custA.id)).toBe(true)
+    expect(await canAccessTenant(techSession, custB.id)).toBe(false)
 
-    // Switching to Tenant A succeeds; switching to Tenant B is strictly denied
-    expect(setSessionActiveTenant(techSession, custA.id).id).toBe(custA.id)
-    expect(() => setSessionActiveTenant(techSession, custB.id)).toThrow(
+    expect((await setSessionActiveTenant(techSession, custA.id)).id).toBe(custA.id)
+    await expect(setSessionActiveTenant(techSession, custB.id)).rejects.toThrow(
       /Forbidden/i,
     )
 
-    const active = resolveActiveTenantForSession({
+    const active = await resolveActiveTenantForSession({
       ...techSession,
       activeTenantId: custA.id,
     })

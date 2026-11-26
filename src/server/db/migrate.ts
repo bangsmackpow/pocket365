@@ -1,11 +1,14 @@
-import type Database from 'better-sqlite3'
-
-interface SqlMigration {
+export interface SqlMigration {
   id: string
   sql: string
 }
 
-const MIGRATIONS: SqlMigration[] = [
+/**
+ * Canonical SQLite / Cloudflare D1 migration definitions.
+ * Kept in sync with `drizzle/*.sql` for `wrangler d1 migrations apply` and
+ * in-memory Vitest D1 test initialization.
+ */
+export const MIGRATIONS: SqlMigration[] = [
   {
     id: '0000_initial',
     sql: `
@@ -216,32 +219,3 @@ const MIGRATIONS: SqlMigration[] = [
     `,
   },
 ]
-
-export function runMigrations(sqlite: Database.Database): void {
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS _pocket365_migrations (
-      id TEXT PRIMARY KEY NOT NULL,
-      applied_at INTEGER NOT NULL
-    );
-  `)
-
-  const appliedRows = sqlite
-    .prepare('SELECT id FROM _pocket365_migrations')
-    .all() as Array<{ id: string }>
-  const appliedIds = new Set(appliedRows.map((row) => row.id))
-
-  const insertMigration = sqlite.prepare(
-    'INSERT INTO _pocket365_migrations (id, applied_at) VALUES (?, ?)',
-  )
-
-  const applyOne = sqlite.transaction((migration: SqlMigration) => {
-    sqlite.exec(migration.sql)
-    insertMigration.run(migration.id, Date.now())
-  })
-
-  for (const migration of MIGRATIONS) {
-    if (!appliedIds.has(migration.id)) {
-      applyOne(migration)
-    }
-  }
-}

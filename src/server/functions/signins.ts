@@ -29,8 +29,8 @@ const listSignInsSchema = z.object({
 export const listSignInLogsFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => listSignInsSchema.parse(input ?? {}))
   .handler(async ({ data }) => {
-    requireSession()
-    const graph = getGraphClient()
+    await requireSession()
+    const graph = await getGraphClient()
 
     try {
       const page = await graph.listSignInLogs({
@@ -126,8 +126,8 @@ const userSignInsSchema = z.object({
 export const getUserSignInsFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => userSignInsSchema.parse(input))
   .handler(async ({ data }) => {
-    requireSession()
-    const graph = getGraphClient()
+    await requireSession()
+    const graph = await getGraphClient()
     try {
       const items = await graph.listUserSignInLogs(
         data.userIdOrUpn,
@@ -156,7 +156,7 @@ export const getUserSignInsFn = createServerFn({ method: 'GET' })
 export const getGraphPermissionsStatusFn = createServerFn({
   method: 'GET',
 }).handler(async () => {
-  requireSession()
+  await requireSession()
   const readiness = getConfigReadiness()
   if (!readiness.graphConfigured) {
     return {
@@ -169,7 +169,8 @@ export const getGraphPermissionsStatusFn = createServerFn({
   }
 
   try {
-    const grantedRoles = await getGraphClient().getGrantedRoles()
+    const graph = await getGraphClient()
+    const grantedRoles = await graph.getGrantedRoles()
     const grantedSet = new Set(grantedRoles.map((r) => r.toLowerCase()))
     return {
       grantedRoles,

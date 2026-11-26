@@ -17,9 +17,11 @@ const listGroupsSchema = z.object({
 export const listGroupsFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => listGroupsSchema.parse(input ?? {}))
   .handler(async ({ data }) => {
-    requireSession()
-    const settings = getRuntimeSettings()
-    const graph = getGraphClient()
+    await requireSession()
+    const [settings, graph] = await Promise.all([
+      getRuntimeSettings(),
+      getGraphClient(),
+    ])
     const page = await graph.listGroups({
       search: data.search,
       nextLink: data.nextLink,
@@ -38,8 +40,8 @@ const groupDetailSchema = z.object({
 export const getGroupDetailFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => groupDetailSchema.parse(input))
   .handler(async ({ data }) => {
-    requireSession()
-    const graph = getGraphClient()
+    await requireSession()
+    const graph = await getGraphClient()
     const [group, members] = await Promise.all([
       graph.getGroup(data.groupId),
       graph.listGroupMembers(data.groupId),
@@ -54,8 +56,8 @@ const searchDirectoryUsersSchema = z.object({
 export const searchDirectoryUsersFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => searchDirectoryUsersSchema.parse(input))
   .handler(async ({ data }) => {
-    requireSession()
-    const graph = getGraphClient()
+    await requireSession()
+    const graph = await getGraphClient()
     const page = await graph.listUsers({ search: data.query, top: 10 })
     return { users: page.items }
   })
@@ -70,13 +72,13 @@ const modifyGroupMemberSchema = z.object({
 export const addGroupMemberFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => modifyGroupMemberSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'group.add_member')
+    const session = await requireRole('admin', undefined, 'group.add_member')
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     try {
       await graph.addGroupMember(data.groupId, data.memberId)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -89,7 +91,7 @@ export const addGroupMemberFn = createServerFn({ method: 'POST' })
       return { ok: true }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -110,13 +112,13 @@ export const addGroupMemberFn = createServerFn({ method: 'POST' })
 export const removeGroupMemberFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => modifyGroupMemberSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'group.remove_member')
+    const session = await requireRole('admin', undefined, 'group.remove_member')
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     try {
       await graph.removeGroupMember(data.groupId, data.memberId)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -129,7 +131,7 @@ export const removeGroupMemberFn = createServerFn({ method: 'POST' })
       return { ok: true }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -156,8 +158,8 @@ const bulkGroupMembersSchema = z.object({
 export const enqueueBulkGroupMembersFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => bulkGroupMembersSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'group.bulk_members')
-    const job = enqueueJob({
+    const session = await requireRole('admin', undefined, 'group.bulk_members')
+    const job = await enqueueJob({
       type:
         data.operation === 'add'
           ? 'group.bulk_add_members'

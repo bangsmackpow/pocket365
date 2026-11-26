@@ -6,10 +6,10 @@ import {
 import { recordAuditLog } from '~/server/db/audit'
 import { buildCanonicalUrl, getClientIp } from '~/server/http/proxy'
 
-function handleLogout(request: Request): Response {
-  const session = destroySessionFromRequest(request)
+async function handleLogout(request: Request): Promise<Response> {
+  const session = await destroySessionFromRequest(request)
   if (session) {
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,

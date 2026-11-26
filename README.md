@@ -1,151 +1,124 @@
 # Pocket365
 
-**Pocket365** (`pocket365`) is a production-ready, self-hosted Microsoft 365 security, compliance, and **multi-tenant MSP** management web application built with **TanStack Start** (TanStack Router, TanStack Query, and Nitro Node server output), **Node.js 22 LTS**, **TypeScript**, **SQLite + Drizzle ORM** (with PostgreSQL scale-out config), and **Microsoft Entra ID OIDC** authentication.
+**Pocket365** (`pocket365`) is a **Cloudflare-native** Microsoft 365 security, compliance, and **multi-tenant MSP** management web application built with **TanStack Start** (TanStack Router, TanStack Query, and Nitro v3 `cloudflare-module`), **Cloudflare Workers**, **D1 (SQLite)** + **Drizzle ORM**, **KV**, **R2**, **Cron Triggers**, **Queues**, and **Microsoft Entra ID OIDC** authentication.
 
-Designed for clean container deployment via **GitHub Actions → GHCR → Portainer** behind **Nginx Proxy Manager**.
+Deploy to **your own Cloudflare account** in `self_hosted` mode (Free single-tenant starter or Pro single-tenant license), or operate as a **multi-tenant MSP SaaS** in `saas` mode using a single deployment flag (`DEPLOYMENT_MODE`).
 
 ---
 
 ## Core Capabilities
 
-- **Single-Tenant Entra ID OIDC Authentication:** Authorization Code flow with PKCE (`S256`), single-use `state` + browser cookie binding, `nonce` verification, and RS256 JWKS signature + `iss`/`aud`/`tid` validation.
-- **Strict Granular RBAC (`owner`, `admin`, `helpdesk`, `security_auditor`, `viewer`):**
-  - `viewer` (`read-only`): Inspect dashboards, logs, and reports. Cannot execute mutations.
-  - `helpdesk`: Read all + password reset, Temporary Access Pass (TAP), MFA method reset, revoke sessions, and Out-of-Office settings.
-  - `security_auditor`: Read all + trigger tenant-wide Mailbox BEC sweeps and CIS/compliance reports.
-  - `admin` / `owner` (`full-admin`): Full access to directory/license/group mutations, CIS 1-click fixes, offboarding/onboarding, BitLocker recovery keys, webhook configuration, and active session revocation.
-  - Every mutating server function and API handler enforces `requireRole(...)` / `requireCapability(...)` server-side (`403 Forbidden`) and writes an immutable SQLite audit trail.
+- **100% Cloudflare Full-Stack Runtime:**
+  - **Cloudflare Workers:** Zero-cold-start edge SSR & API runtime (`wrangler.jsonc`, `nodejs_compat`).
+  - **Cloudflare D1:** Edge SQLite via Drizzle ORM (`drizzle-orm/d1`) for sessions, audit logs, managed tenants, CIS history, alerts, onboarding templates, and licensing.
+  - **Cloudflare KV (`POCKET365_KV`):** Distributed edge rate limiting + AES-256-GCM encrypted Graph OAuth token caching across isolates.
+  - **Cloudflare R2 (`POCKET365_R2`):** Archived CIS compliance report snapshots (`/api/exports/download`).
+  - **Cloudflare Cron Triggers & Queues:** Scheduled security/drift alert sweeps (`*/15 * * * *`) and async bulk job processing (with automatic `ctx.waitUntil()` fallback when `POCKET365_QUEUE` is unbound so Cloudflare Free plans work cleanly).
+  - **DNS-over-HTTPS:** Pure-fetch DoH (`cloudflare-dns.com/dns-query`) for CIS SPF/DKIM/DMARC email auth audits and outbound webhook SSRF protection.
+- **Entra ID OIDC Authentication & 5-Tier RBAC:**
+  - Authorization Code + PKCE (`S256`), single-use `state` + browser cookie binding, `nonce`, RS256 JWKS signature verification.
+  - Granular roles: `owner`, `admin`, `helpdesk`, `security_auditor`, and `viewer` enforced server-side (`403 Forbidden`) with immutable D1 audit logs.
 - **Defense-in-Depth Security Baseline:**
-  - Sliding-window **rate limiting** (`429 Too Many Requests` + `Retry-After`) across auth (`20/10m`), API (`180/m`), mutations (`60/m`), and heavy sweeps (`8/5m`), using `TRUSTED_PROXY_HOPS`-aware client IP extraction.
-  - **CSRF protection** (`Origin` + `Sec-Fetch-Site`), hardened **HTTP security headers** (CSP, `X-Frame-Options: DENY`, `nosniff`, HSTS), **AES-256-GCM encryption** for stored webhook URLs, **SSRF blocking** on outbound webhooks, and **CSV formula injection** protection.
-  - **Active Sessions Center (`/security`):** Idle + absolute session timeouts, view live SQLite sessions, and revoke individual or all other sessions.
+  - Edge KV sliding-window rate limiting (`auth`, `api`, `mutation`, `heavy`), CSRF (`Origin` + `Sec-Fetch-Site`), strict HTTP security headers (CSP, HSTS, `X-Frame-Options: DENY`), AES-256-GCM secret encryption at rest, SSRF blocking, CSV formula-injection neutralization, and `/security` active sessions management.
 - **Commercial Tiering & Licensing (`/billing`):**
-  - Supports **Community**, **Pro**, and **Enterprise** tiers enforced server-side via `requireEntitlement(...)` (`HTTP 402` when `LICENSE_ENFORCEMENT=strict`; defaults to `off` for open self-hosted deployments).
-  - Supports **offline Ed25519-signed JWT license keys** (`LICENSE_PUBLIC_KEY`) as well as **Stripe webhook subscription sync** (`POST /api/billing/webhook`).
-- **Multi-Tenant MSP Command Center (`/tenants`):**
-  - Seamlessly upgrades existing single-tenant deployments by auto-seeding `ENTRA_TENANT_ID` as the primary tenant.
-  - Onboard additional customer M365 tenants via **1-click Microsoft Admin Consent** (`/api/tenants/consent-callback`) or **dedicated per-tenant app credentials** (encrypted at rest with AES-256-GCM).
-  - Strict **per-tenant Graph token & client isolation**, **Global Tenant Switcher** in the sidebar, **per-tenant technician scoping** (`tenant_access`), and **Cross-Tenant CIS + MFA Posture Scanning**.
-- **App-Only Microsoft Graph Client:** Supports **Client Secret** or **X.509 Certificate (`RS256` + `x5t`)** authentication, token caching, automatic 401 refresh, and `429 Too Many Requests` (`Retry-After`) + `503`/`504` exponential backoff.
-- **SQLite Persistence & Async Job Runner:** Stored at `/data/pocket365.db` (defaults to `./data/pocket365.db` locally) with WAL mode, auto-migrations on startup, server-side sessions, audit log, runtime settings, and background bulk job execution.
-- **Reverse Proxy Ready:** Respects `X-Forwarded-Proto`, `X-Forwarded-Host`, and `X-Forwarded-For`, uses `APP_BASE_URL` for OIDC redirect URIs, and sets `HttpOnly`, `Secure`, `SameSite=Lax` cookies automatically over HTTPS.
+  - `self_hosted` Free (`community`) vs Pro (`pro` offline Ed25519-signed license key), and `saas` (all features + multi-tenant MSP via Stripe).
+- **Full M365 & MSP Feature Suite:**
+  - Sign-in Logs Troubleshooting (AADSTS diagnosis), MFA Coverage Report, 24 CIS M365 Benchmarks + 16 1-click fixes + R2 report snapshots, Privileged Roles, Directory Audits, Users/Offboarding/Onboarding Templates, Groups, Mailbox BEC Sweep & Auto-Reply, Apps/OAuth Grants, Stale Cleanup, CA Drift, Devices/BitLocker, Automated Alerts, and Multi-Tenant MSP Command Center (`/tenants`).
 
 ---
 
 ## 1. Microsoft Entra ID App Registration Setup
 
-You can use either **one** App Registration for both OIDC login and Graph App-Only calls, or **two separate** registrations (recommended for least-privilege separation).
-
 ### A. Interactive OIDC Login App (`OIDC_CLIENT_ID`)
 1. Open **Microsoft Entra admin center** → **Identity** → **Applications** → **App registrations** → **New registration**.
 2. Name: `Pocket365 Web`
-3. Supported account types: **Accounts in this organizational directory only (Single tenant)**.
-4. Redirect URI:
-   - Platform: **Web**
-   - URI: `https://pocket365.example.com/api/auth/callback` (for local dev, also add `http://localhost:3000/api/auth/callback`)
-5. Copy **Directory (tenant) ID** → `ENTRA_TENANT_ID` and **Application (client) ID** → `OIDC_CLIENT_ID`.
-6. Go to **Certificates & secrets** → **New client secret** → copy value to `OIDC_CLIENT_SECRET`.
-7. *(Optional, recommended for group-based RBAC)* Go to **Token configuration** → **Add groups claim** → select **Security groups** (emit **Group ID** in ID tokens). If a user exceeds Entra's group overage limit, Pocket365 automatically falls back to Microsoft Graph when configured.
+3. Supported account types:
+   - For `self_hosted`: **Accounts in this organizational directory only (Single tenant)**
+   - For `saas`: **Accounts in any organizational directory (Multitenant)**
+4. Redirect URI (Platform: **Web**):
+   - `https://<your-worker-or-custom-domain>/api/auth/callback`
+5. Copy **Directory (tenant) ID** → `ENTRA_TENANT_ID`, **Application (client) ID** → `OIDC_CLIENT_ID`, and create a client secret → `OIDC_CLIENT_SECRET`.
+6. *(Optional, recommended for group-based RBAC)* Under **Token configuration**, add the **Security groups** claim (Group ID).
 
 ### B. Microsoft Graph App-Only Registration (`GRAPH_CLIENT_ID`)
-1. Create (or reuse) a **Single tenant** App Registration (`Pocket365 Graph Daemon`).
-2. Go to **API permissions** → **Add a permission** → **Microsoft Graph** → **Application permissions**:
-   - `User.ReadWrite.All` *(list/search users, toggle `accountEnabled`, assign/remove licenses, offboarding)*
-   - `Group.ReadWrite.All` *(list/search groups, read/add/remove group members)*
-   - `Organization.Read.All` *(read tenant summary and `subscribedSkus` license pools)*
-   - `AuditLog.Read.All` *(troubleshoot Entra sign-in logs and directory audit logs)*
-   - `UserAuthenticationMethod.ReadWrite.All` *(inspect/delete user MFA methods, issue Temporary Access Pass, tenant MFA coverage report)*
-   - `RoleManagement.ReadWrite.Directory` *(Privileged Roles & Admin Monitor + add/remove directory role assignments)*
-   - `Policy.Read.All`, `Policy.ReadWrite.Authorization`, `Policy.ReadWrite.SecurityDefaults`, `Policy.ReadWrite.ConsentRequest`, `Policy.ReadWrite.AuthenticationMethod` *(CIS Microsoft 365 Benchmarks & 1-click remediations)*
-   - `SharePointTenantSettings.ReadWrite.All` *(CIS Section 7 SharePoint & OneDrive external sharing & legacy auth hardening + 1-click fixes)*
-   - `Application.Read.All`, `DelegatedPermissionGrant.ReadWrite.All` *(App Registrations expiring secrets/certs & risky OAuth grants)*
-   - `MailboxSettings.ReadWrite`, `Mail.ReadWrite` *(Mailbox Out-of-Office settings & BEC inbox forwarding rule audit/removal)*
-   - `SecurityEvents.Read.All` *(Microsoft Secure Score & Defender/Security Alerts)*
-   - `Policy.ReadWrite.ConditionalAccess` *(Optional — Entra ID P1+: Conditional Access inspector, SQLite snapshot & drift diff)*
-   - `DeviceManagementManagedDevices.ReadWrite.All`, `BitlockerKey.Read.All` *(Optional — Intune: Managed devices & audited BitLocker recovery keys)*
-   - `IdentityRiskyUser.ReadWrite.All` *(Optional — Entra ID P2: Risky Users & Identity Protection)*
-   - `Directory.Read.All` *(fallback group lookup on login and directory metadata)*
-3. Click **Grant admin consent for `<Your Tenant>`** and confirm all permissions show green checkmarks.
-4. Configure credentials using **one** of:
-   - **Client Secret:** Create a secret under **Certificates & secrets** → set `GRAPH_CLIENT_SECRET`.
-   - **X.509 Certificate (Recommended for production):** Upload your `.cer` public certificate under **Certificates & secrets** → **Certificates**, copy the **Thumbprint** (40 hex chars) to `GRAPH_CERT_THUMBPRINT`, and supply the matching PKCS#8 PEM private key via `GRAPH_CERT_PRIVATE_KEY` or mounted file `GRAPH_CERT_PRIVATE_KEY_PATH`.
+Grant Microsoft Graph **Application permissions** and click **Grant admin consent**:
+- `User.ReadWrite.All`, `Group.ReadWrite.All`, `Organization.Read.All`, `Directory.Read.All`
+- `AuditLog.Read.All`, `UserAuthenticationMethod.ReadWrite.All`, `RoleManagement.ReadWrite.Directory`
+- `Policy.Read.All`, `Policy.ReadWrite.Authorization`, `Policy.ReadWrite.SecurityDefaults`, `Policy.ReadWrite.ConsentRequest`, `Policy.ReadWrite.AuthenticationMethod`
+- `SharePointTenantSettings.ReadWrite.All`, `Application.Read.All`, `DelegatedPermissionGrant.ReadWrite.All`
+- `MailboxSettings.ReadWrite`, `Mail.ReadWrite`, `SecurityEvents.Read.All`
+- *(Optional P1/P2/Intune)* `Policy.ReadWrite.ConditionalAccess`, `DeviceManagementManagedDevices.ReadWrite.All`, `BitlockerKey.Read.All`, `IdentityRiskyUser.ReadWrite.All`
+
+Authenticate using either an **X.509 Certificate** (`GRAPH_CERT_THUMBPRINT` + `GRAPH_CERT_PRIVATE_KEY` secret — recommended) or a **Client Secret** (`GRAPH_CLIENT_SECRET`).
 
 ---
 
-## 2. Local Development
+## 2. Deploy to Cloudflare Workers
+
+### A. Provision Cloudflare Resources
+```bash
+npm install
+
+# 1. Create D1 database, KV namespace, and R2 bucket
+npx wrangler d1 create pocket365-db
+npx wrangler kv namespace create POCKET365_KV
+npx wrangler r2 bucket create pocket365-exports
+```
+Paste the returned `database_id` and KV `id` into `wrangler.jsonc`.
+
+### B. Apply D1 Migrations & Set Secrets
+```bash
+# Apply SQLite schema migrations to remote D1
+npm run db:migrate:remote
+
+# Set required Worker secrets
+npx wrangler secret put APP_BASE_URL
+npx wrangler secret put ENTRA_TENANT_ID
+npx wrangler secret put OIDC_CLIENT_ID
+npx wrangler secret put OIDC_CLIENT_SECRET
+npx wrangler secret put GRAPH_CLIENT_ID
+npx wrangler secret put GRAPH_CLIENT_SECRET
+npx wrangler secret put SESSION_SECRET
+npx wrangler secret put DATA_ENCRYPTION_KEY
+npx wrangler secret put ADMIN_OIDS_OR_GROUPS
+```
+
+### C. Build & Deploy
+```bash
+npm run deploy
+```
+
+---
+
+## 3. Local Development & Testing
 
 ```bash
-cp .env.example .env
-# Edit .env with your ENTRA_TENANT_ID, OIDC_*, GRAPH_*, SESSION_SECRET, and ADMIN_OIDS_OR_GROUPS
+cp .env.example .dev.vars
+# Edit .dev.vars with your local values
 
 npm install
+npm run db:migrate:local
 npm run dev
 ```
 
-Pocket365 starts at `http://localhost:3000` and auto-creates `./data/pocket365.db` on startup.
-
 ### Useful Scripts
-
 ```bash
-npm run typecheck   # Strict TypeScript check
-npm run lint        # ESLint check
-npm test            # Vitest unit tests (Auth, OIDC, RBAC, Graph retries, Async Jobs)
-npm run build       # Production Vite + Nitro Node build (.output/server/index.mjs)
-npm start           # Run compiled production server
+npm run build            # Production Vite + Nitro Cloudflare Workers build
+npm run typecheck        # Strict TypeScript check
+npm run lint             # ESLint check
+npm test                 # Vitest unit tests (D1/node:sqlite, KV, R2, Auth, RBAC, Billing, Tenants)
+npm run preview          # Run locally under Wrangler / Miniflare
+npm run deploy           # Build & deploy to Cloudflare Workers
+npm run db:migrate:local # Apply D1 migrations locally
+npm run db:migrate:remote# Apply D1 migrations to remote D1
 ```
 
 ---
 
-## 3. Nginx Proxy Manager Setup
+## 4. GitHub Actions CI / CD
 
-1. Ensure Pocket365 and Nginx Proxy Manager share a Docker network (e.g., `npm_network`).
-2. In **Nginx Proxy Manager**, add a new **Proxy Host**:
-   - **Domain Names:** `pocket365.example.com`
-   - **Scheme:** `http`
-   - **Forward Hostname / IP:** `pocket365`
-   - **Forward Port:** `3000`
-   - **Block Common Exploits:** Enabled
-   - **Websockets Support:** Optional (safe to enable)
-3. Under the **SSL** tab:
-   - Select or request a Let's Encrypt SSL certificate for `pocket365.example.com`.
-   - Enable **Force SSL** and **HTTP/2 Support**.
-4. Nginx Proxy Manager automatically passes `X-Forwarded-Proto`, `X-Forwarded-Host`, and `X-Forwarded-For`. Ensure `APP_BASE_URL=https://pocket365.example.com` matches the exact public hostname (no trailing slash).
+[`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml) runs `build`, `typecheck`, `lint`, `test`, and `npm audit --omit=dev --audit-level=high` on every PR and push to `main`.
 
----
-
-## 4. GitHub Actions & GHCR Permissions
-
-The included [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml) workflow:
-- Runs `typecheck`, `lint`, `test`, and `build` on every Pull Request and push to `main`.
-- On pushes to `main` (and `v*.*.*` tags), builds the multi-stage Docker image with GitHub Actions cache (`type=gha`) and publishes it to:
-  - `ghcr.io/bangsmackpow/pocket365:latest`
-  - `ghcr.io/bangsmackpow/pocket365:<short-sha>`
-  - Branch & SemVer tags
-
-Ensure repository workflow permissions allow publishing packages:
-1. Go to GitHub **Repository Settings** → **Actions** → **General** → **Workflow permissions**.
-2. Confirm `GITHUB_TOKEN` has read/write permissions (the workflow explicitly scopes `packages: write` on the `docker` job).
-3. If the GHCR package is private, create a GitHub PAT (`read:packages`) and add it under **Portainer → Registries** for `ghcr.io`.
-
----
-
-## 5. Deploying & Updating in Portainer
-
-1. Ensure the shared proxy network exists on your Docker host:
-   ```bash
-   docker network create npm_network
-   ```
-2. In **Portainer**, navigate to **Stacks** → **Add stack**:
-   - Name: `pocket365`
-   - Paste the contents of [`docker-compose.yml`](docker-compose.yml) (or link directly to `https://github.com/bangsmackpow/pocket365.git`).
-   - Confirm the image is set to `ghcr.io/bangsmackpow/pocket365:latest`.
-3. Add the required environment variables in Portainer's **Environment variables** editor:
-   - `APP_BASE_URL` (e.g., `https://pocket365.example.com`)
-   - `ENTRA_TENANT_ID`
-   - `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`
-   - `SESSION_SECRET` (generate via `openssl rand -hex 32`)
-   - `ADMIN_OIDS_OR_GROUPS`, `VIEWER_OIDS_OR_GROUPS`
-   - `GRAPH_CLIENT_ID`, and either `GRAPH_CLIENT_SECRET` or `GRAPH_CERT_THUMBPRINT` + `GRAPH_CERT_PRIVATE_KEY`
-   - `PROXY_NETWORK` *(defaults to `npm_network`)*
-4. Click **Deploy the stack**. Verify readiness at `https://pocket365.example.com/api/health`.
-5. **Updating:** In Portainer → **Stacks** → `pocket365` → **Editor** → **Update the stack** with **Re-pull image and redeploy** enabled. SQLite data persists safely in the `pocket365_data` volume (`/data/pocket365.db`).
+To enable automatic Cloudflare Workers deployment on pushes to `main`:
+1. Add repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+2. Add repository variable `CLOUDFLARE_DEPLOY_ENABLED=true`.

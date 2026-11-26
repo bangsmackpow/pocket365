@@ -1,9 +1,17 @@
 import crypto from 'node:crypto'
 import { importPKCS8, SignJWT } from 'jose'
+import { getCloudflareEnv } from '~/server/cf/env'
+import { kvDelete, kvGetJson, kvPutJson } from '~/server/cf/kv'
 import { getConfig } from '~/server/config'
+import { decryptSecret, encryptSecret } from '~/server/security/crypto'
 
 interface CachedToken {
   accessToken: string
+  expiresAt: number
+}
+
+interface EncryptedKvToken {
+  tokenEnc: string
   expiresAt: number
 }
 
@@ -63,8 +71,32 @@ export class GraphTokenProvider {
     this.overrideCredentials = overrideCredentials
   }
 
+  private resolveCredentials(): TenantGraphCredentials {
+    if (this.overrideCredentials) {
+      return this.overrideCredentials
+    }
+    const cfg = getConfig()
+    return {
+      entraTenantId: cfg.entraTenantId,
+      clientId: cfg.graphClientId,
+      clientSecret: cfg.graphClientSecret,
+      certThumbprint: cfg.graphCertThumbprint,
+      certPrivateKey: cfg.graphCertPrivateKey,
+    }
+  }
+
+  private getKvCacheKey(creds: TenantGraphCredentials): string {
+    return `graph:tok:${creds.entraTenantId}:${creds.clientId}`
+  }
+
   public invalidate(): void {
     this.cache = null
+    if (getCloudflareEnv().POCKET365_KV) {
+      const creds = this.resolveCredentials()
+      if (creds.entraTenantId && creds.clientId) {
+        void kvDelete(this.getKvCacheKey(creds))
+      }
+    }
   }
 
   public async getAccessToken(forceRefresh = false): Promise<string> {
@@ -74,6 +106,23 @@ export class GraphTokenProvider {
       this.cache.expiresAt - REFRESH_MARGIN_MS > Date.now()
     ) {
       return this.cache.accessToken
+    }
+
+    // Check Cloudflare KV shared token cache across edge isolates (encrypted at rest)
+    if (!forceRefresh && getCloudflareEnv().POCKET365_KV) {
+      const creds = this.resolveCredentials()
+      if (creds.entraTenantId && creds.clientId) {
+        const kvHit = await kvGetJson<EncryptedKvToken>(this.getKvCacheKey(creds))
+        if (kvHit && kvHit.expiresAt - REFRESH_MARGIN_MS > Date.now()) {
+          try {
+            const accessToken = decryptSecret(kvHit.tokenEnc)
+            this.cache = { accessToken, expiresAt: kvHit.expiresAt }
+            return accessToken
+          } catch {
+            // Fall through to re-acquire if decryption fails
+          }
+        }
+      }
     }
 
     if (this.inFlight) {
@@ -88,14 +137,7 @@ export class GraphTokenProvider {
   }
 
   private async acquireToken(): Promise<string> {
-    const cfg = getConfig()
-    const creds: TenantGraphCredentials = this.overrideCredentials ?? {
-      entraTenantId: cfg.entraTenantId,
-      clientId: cfg.graphClientId,
-      clientSecret: cfg.graphClientSecret,
-      certThumbprint: cfg.graphCertThumbprint,
-      certPrivateKey: cfg.graphCertPrivateKey,
-    }
+    const creds = this.resolveCredentials()
 
     if (!creds.entraTenantId || !creds.clientId) {
       throw new Error(
@@ -156,9 +198,22 @@ export class GraphTokenProvider {
         ? data.expires_in
         : 3600
 
+    const expiresAt = Date.now() + expiresInSeconds * 1000
     this.cache = {
       accessToken: data.access_token,
-      expiresAt: Date.now() + expiresInSeconds * 1000,
+      expiresAt,
+    }
+
+    if (getCloudflareEnv().POCKET365_KV && expiresInSeconds > 180) {
+      const kvPayload: EncryptedKvToken = {
+        tokenEnc: encryptSecret(data.access_token),
+        expiresAt,
+      }
+      await kvPutJson(
+        this.getKvCacheKey(creds),
+        kvPayload,
+        Math.max(60, expiresInSeconds - 120),
+      )
     }
 
     return data.access_token

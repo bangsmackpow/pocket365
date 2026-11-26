@@ -18,14 +18,14 @@ import { decryptSecret, encryptSecret } from '~/server/security/crypto'
 
 /**
  * Ensures the primary tenant configured via ENTRA_TENANT_ID is seeded into
- * `managed_tenants` so existing single-tenant deployments upgrade seamlessly.
+ * `managed_tenants` so single-tenant deployments work seamlessly.
  */
-export function ensurePrimaryTenantSeeded(): ManagedTenantRow | null {
+export async function ensurePrimaryTenantSeeded(): Promise<ManagedTenantRow | null> {
   const cfg = getConfig()
   if (!cfg.entraTenantId) return null
 
   const db = getDb()
-  const existing = db
+  const existing = await db
     .select()
     .from(managedTenants)
     .where(eq(managedTenants.entraTenantId, cfg.entraTenantId))
@@ -57,12 +57,12 @@ export function ensurePrimaryTenantSeeded(): ManagedTenantRow | null {
     updatedAt: now,
   }
 
-  db.insert(managedTenants).values(row).run()
+  await db.insert(managedTenants).values(row).run()
   return row
 }
 
-export function listAllManagedTenants(): ManagedTenantRow[] {
-  ensurePrimaryTenantSeeded()
+export async function listAllManagedTenants(): Promise<ManagedTenantRow[]> {
+  await ensurePrimaryTenantSeeded()
   const db = getDb()
   return db
     .select()
@@ -71,12 +71,17 @@ export function listAllManagedTenants(): ManagedTenantRow[] {
     .all()
 }
 
-export function getManagedTenantById(id: string): ManagedTenantRow | null {
-  ensurePrimaryTenantSeeded()
+export async function getManagedTenantById(
+  id: string,
+): Promise<ManagedTenantRow | null> {
+  await ensurePrimaryTenantSeeded()
   const db = getDb()
   return (
-    db.select().from(managedTenants).where(eq(managedTenants.id, id)).get() ??
-    null
+    (await db
+      .select()
+      .from(managedTenants)
+      .where(eq(managedTenants.id, id))
+      .get()) ?? null
   )
 }
 
@@ -85,15 +90,17 @@ export function getManagedTenantById(id: string): ManagedTenantRow | null {
  * Owners/Admins can access all managed tenants. Other roles are scoped to
  * `tenant_access` if any explicit grants exist for them, otherwise primary tenant.
  */
-export function listAccessibleTenants(session: SessionUser): ManagedTenantRow[] {
-  const all = listAllManagedTenants()
+export async function listAccessibleTenants(
+  session: SessionUser,
+): Promise<ManagedTenantRow[]> {
+  const all = await listAllManagedTenants()
   if (isAdminRole(session.role)) {
     return all
   }
 
   const db = getDb()
   const principals = [session.upn.toLowerCase(), session.oid.toLowerCase()]
-  const grants = db
+  const grants = await db
     .select()
     .from(tenantAccess)
     .where(inArray(tenantAccess.principal, principals))
@@ -107,24 +114,24 @@ export function listAccessibleTenants(session: SessionUser): ManagedTenantRow[] 
   return all.filter((t) => allowedIds.has(t.id))
 }
 
-export function canAccessTenant(
+export async function canAccessTenant(
   session: SessionUser,
   managedTenantId: string,
-): boolean {
-  const accessible = listAccessibleTenants(session)
+): Promise<boolean> {
+  const accessible = await listAccessibleTenants(session)
   return accessible.some((t) => t.id === managedTenantId)
 }
 
-export function resolveActiveTenantForSession(
+export async function resolveActiveTenantForSession(
   session: SessionUser | null,
-): ManagedTenantRow | null {
-  ensurePrimaryTenantSeeded()
+): Promise<ManagedTenantRow | null> {
+  await ensurePrimaryTenantSeeded()
   if (!session) {
-    const all = listAllManagedTenants()
+    const all = await listAllManagedTenants()
     return all.find((t) => t.isPrimary === 1) ?? all[0] ?? null
   }
 
-  const accessible = listAccessibleTenants(session)
+  const accessible = await listAccessibleTenants(session)
   if (session.activeTenantId) {
     const match = accessible.find((t) => t.id === session.activeTenantId)
     if (match) return match
@@ -132,20 +139,21 @@ export function resolveActiveTenantForSession(
   return accessible.find((t) => t.isPrimary === 1) ?? accessible[0] ?? null
 }
 
-export function setSessionActiveTenant(
+export async function setSessionActiveTenant(
   session: SessionUser,
   managedTenantId: string,
-): ManagedTenantRow {
-  const target = getManagedTenantById(managedTenantId)
+): Promise<ManagedTenantRow> {
+  const target = await getManagedTenantById(managedTenantId)
   if (!target) {
     throw new Error('Managed tenant not found.')
   }
-  if (!canAccessTenant(session, target.id)) {
+  if (!(await canAccessTenant(session, target.id))) {
     throw new Error('Forbidden: you do not have access to this managed tenant.')
   }
 
   const db = getDb()
-  db.update(sessions)
+  await db
+    .update(sessions)
     .set({ activeTenantId: target.id })
     .where(eq(sessions.id, session.sessionId))
     .run()
@@ -183,7 +191,7 @@ export function resolveTenantGraphCredentials(
     }
   }
 
-  // Dedicated per-tenant app credentials encrypted at rest in SQLite
+  // Dedicated per-tenant app credentials encrypted at rest in D1
   return {
     entraTenantId: tenant.entraTenantId,
     clientId: tenant.clientId,
@@ -197,7 +205,7 @@ export function resolveTenantGraphCredentials(
   }
 }
 
-export function createManagedTenantRecord(params: {
+export async function createManagedTenantRecord(params: {
   entraTenantId: string
   displayName: string
   primaryDomain?: string
@@ -207,7 +215,7 @@ export function createManagedTenantRecord(params: {
   certThumbprint?: string
   certPrivateKey?: string
   createdBy: string
-}): ManagedTenantRow {
+}): Promise<ManagedTenantRow> {
   const db = getDb()
   const now = Date.now()
   const id = crypto.randomUUID()
@@ -236,14 +244,14 @@ export function createManagedTenantRecord(params: {
     updatedAt: now,
   }
 
-  db.insert(managedTenants).values(row).run()
+  await db.insert(managedTenants).values(row).run()
   return row
 }
 
-export function createAdminConsentRequestUrl(
+export async function createAdminConsentRequestUrl(
   actorUpn: string,
   request?: Request,
-): { consentUrl: string; state: string } {
+): Promise<{ consentUrl: string; state: string }> {
   const cfg = getConfig()
   if (!cfg.graphClientId) {
     throw new Error('GRAPH_CLIENT_ID must be configured for Admin Consent onboarding.')
@@ -252,7 +260,8 @@ export function createAdminConsentRequestUrl(
   const db = getDb()
   const state = `consent_${crypto.randomBytes(24).toString('base64url')}`
   const now = Date.now()
-  db.insert(oidcStates)
+  await db
+    .insert(oidcStates)
     .values({
       state,
       nonce: actorUpn,

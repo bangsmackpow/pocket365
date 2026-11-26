@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetConfigCache } from '~/server/config'
-import { closeDb, initDbForTesting } from '~/server/db'
 import { listAuditLogs } from '~/server/db/audit'
-import { isWeakMfaOnly, summarizeMfaCoverage } from './mfa-helpers'
+import { closeTestDb, initDbForTesting } from '~/server/db/test-d1'
 import {
   resolveAuthMethodSegment,
   type GraphUserRegistrationDetail,
@@ -12,20 +11,19 @@ import {
   enqueueJob,
   generateStrongPassword,
   processNextQueuedJob,
-  stopJobWorker,
 } from './jobs'
+import { isWeakMfaOnly, summarizeMfaCoverage } from './mfa-helpers'
 
 describe('User Security, MFA Coverage & Offboarding Wizard', () => {
   const originalEnv = { ...process.env }
 
   beforeEach(() => {
     resetConfigCache()
-    initDbForTesting(':memory:')
+    initDbForTesting()
   })
 
   afterEach(() => {
-    stopJobWorker()
-    closeDb()
+    closeTestDb()
     process.env = { ...originalEnv }
     resetConfigCache()
   })
@@ -93,7 +91,7 @@ describe('User Security, MFA Coverage & Offboarding Wizard', () => {
       role: 'admin' as const,
     }
 
-    enqueueJob({
+    await enqueueJob({
       type: 'user.offboard',
       payload: {
         userId: 'u-100',
@@ -114,16 +112,14 @@ describe('User Security, MFA Coverage & Offboarding Wizard', () => {
     expect(finished?.status).toBe('completed')
     const result = JSON.parse(finished!.resultJson!)
     expect(result.failed).toBe(0)
-    expect(result.succeeded).toBe(6) // disable, revoke, scramble, licenses, 1 non-dynamic group, clear manager
+    expect(result.succeeded).toBe(6)
 
-    // Dynamic group must NOT be removed
     expect(fakeGraph.removeGroupMember).toHaveBeenCalledTimes(1)
     expect(fakeGraph.removeGroupMember).toHaveBeenCalledWith('grp-1', 'u-100')
 
-    // Generated password must NOT appear in job result or audit logs
     expect(capturedPassword.length).toBeGreaterThanOrEqual(20)
     expect(finished!.resultJson).not.toContain(capturedPassword)
-    const audits = listAuditLogs({ limit: 10 })
+    const audits = await listAuditLogs({ limit: 10 })
     for (const a of audits) {
       expect(a.detailsJson).not.toContain(capturedPassword)
     }

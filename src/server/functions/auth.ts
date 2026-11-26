@@ -7,12 +7,12 @@ import {
 } from '~/server/tenants/registry'
 
 export const getSessionFn = createServerFn({ method: 'GET' }).handler(async () => {
-  const session = getCurrentSession()
+  const session = await getCurrentSession()
   const readiness = getConfigReadiness()
   const cfg = getConfig()
 
   const accessibleTenants = session
-    ? listAccessibleTenants(session).map((t) => ({
+    ? (await listAccessibleTenants(session)).map((t) => ({
         id: t.id,
         displayName: t.displayName,
         primaryDomain: t.primaryDomain,
@@ -20,7 +20,9 @@ export const getSessionFn = createServerFn({ method: 'GET' }).handler(async () =
       }))
     : []
 
-  const activeTenant = session ? resolveActiveTenantForSession(session) : null
+  const activeTenant = session
+    ? await resolveActiveTenantForSession(session)
+    : null
 
   return {
     user: session

@@ -57,23 +57,23 @@ const PRO_FEATURES: EntitlementFeature[] = [
   'cleanup.stale',
   'alerts.webhooks',
   'rbac.granular',
+  'posture.ca_drift',
+  'posture.devices_bitlocker',
+  'posture.risky_users',
+  'compliance.siem_export',
 ]
 
 const ENTERPRISE_FEATURES: EntitlementFeature[] = [
   ...PRO_FEATURES,
   'tenants.multi_tenant',
-  'posture.ca_drift',
-  'posture.devices_bitlocker',
-  'posture.risky_users',
-  'compliance.siem_export',
   'branding.white_label',
 ]
 
 export const TIER_CATALOG: Record<PlanTier, TierDefinition> = {
   community: {
     tier: 'community',
-    name: 'Community / Starter',
-    tagline: 'Core single-tenant Entra ID & M365 operations',
+    name: 'Community / Self-Hosted Free',
+    tagline: 'Core single-tenant Entra ID & M365 operations on your Cloudflare account',
     maxTenants: 1,
     maxUsers: 50,
     maxWebhooks: 0,
@@ -82,8 +82,8 @@ export const TIER_CATALOG: Record<PlanTier, TierDefinition> = {
   },
   pro: {
     tier: 'pro',
-    name: 'Pro Security',
-    tagline: 'Automated CIS hardening, BEC sweeps, onboarding & alerts',
+    name: 'Pro Single-Tenant',
+    tagline: 'Full single-tenant CIS hardening, BEC sweeps, alerts, onboarding & posture',
     maxTenants: 1,
     maxUsers: 2500,
     maxWebhooks: 10,
@@ -92,8 +92,8 @@ export const TIER_CATALOG: Record<PlanTier, TierDefinition> = {
   },
   enterprise: {
     tier: 'enterprise',
-    name: 'Enterprise / MSP',
-    tagline: 'Multi-tenant MSP command center, CA drift, BitLocker & SIEM',
+    name: 'Pocket365 Cloud SaaS (MSP)',
+    tagline: 'All features + unlimited multi-tenant MSP command center & white-label',
     maxTenants: 500,
     maxUsers: 100000,
     maxWebhooks: 100,
@@ -191,7 +191,10 @@ export async function verifySignedLicenseKey(
         : def.maxTenants,
     maxUsers:
       typeof payload.maxUsers === 'number' ? payload.maxUsers : def.maxUsers,
-    expiresAt: typeof payload.exp === 'number' ? payload.exp * 1000 : Date.now() + 365 * 86400_000,
+    expiresAt:
+      typeof payload.exp === 'number'
+        ? payload.exp * 1000
+        : Date.now() + 365 * 86400_000,
   }
 }
 
@@ -209,10 +212,10 @@ export interface ActivePlanInfo {
   features: EntitlementFeature[]
 }
 
-export function getActivePlan(): ActivePlanInfo {
+export async function getActivePlan(): Promise<ActivePlanInfo> {
   const cfg = getConfig()
   const db = getDb()
-  const stored = db
+  const stored = await db
     .select()
     .from(licenseState)
     .where(eq(licenseState.id, 'active'))
@@ -244,8 +247,10 @@ export function getActivePlan(): ActivePlanInfo {
   }
 }
 
-export function isFeatureEntitled(feature: EntitlementFeature): boolean {
-  const plan = getActivePlan()
+export async function isFeatureEntitled(
+  feature: EntitlementFeature,
+): Promise<boolean> {
+  const plan = await getActivePlan()
   if (plan.enforcement === 'off') {
     return true
   }
@@ -255,13 +260,13 @@ export function isFeatureEntitled(feature: EntitlementFeature): boolean {
 /**
  * Server-side commercial tier entitlement check.
  * When LICENSE_ENFORCEMENT=strict, throws HTTP 402 Payment Required for locked features.
- * When LICENSE_ENFORCEMENT=off (default self-hosted mode), allows all features cleanly.
+ * When LICENSE_ENFORCEMENT=off, allows all features cleanly.
  */
-export function requireEntitlement(
+export async function requireEntitlement(
   feature: EntitlementFeature,
   actor?: { oid: string; upn: string; role: string },
-): ActivePlanInfo {
-  const plan = getActivePlan()
+): Promise<ActivePlanInfo> {
+  const plan = await getActivePlan()
   if (plan.enforcement === 'off' || plan.features.includes(feature)) {
     return plan
   }
@@ -273,7 +278,7 @@ export function requireEntitlement(
   }
 
   if (actor) {
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: actor.oid,
       actorUpn: actor.upn,
       actorRole: actor.role,
@@ -287,7 +292,7 @@ export function requireEntitlement(
   throw new EntitlementHttpError(feature, plan.tier)
 }
 
-export function persistLicenseState(params: {
+export async function persistLicenseState(params: {
   source: 'env' | 'license_key' | 'stripe'
   tier: PlanTier
   licensee: string
@@ -298,7 +303,7 @@ export function persistLicenseState(params: {
   maxUsers?: number
   expiresAt?: number | null
   updatedBy: string
-}): void {
+}): Promise<void> {
   const db = getDb()
   const def = TIER_CATALOG[params.tier]
   const now = Date.now()
@@ -319,7 +324,8 @@ export function persistLicenseState(params: {
     updatedAt: now,
   }
 
-  db.insert(licenseState)
+  await db
+    .insert(licenseState)
     .values(row)
     .onConflictDoUpdate({
       target: licenseState.id,

@@ -50,10 +50,10 @@ export interface OidcLoginInitResult {
   state: string
 }
 
-export function createOidcLoginTransaction(
+export async function createOidcLoginTransaction(
   returnToRaw?: string | null,
   request?: Request,
-): OidcLoginInitResult {
+): Promise<OidcLoginInitResult> {
   const cfg = getConfig()
   if (!cfg.entraTenantId || !cfg.oidcClientId || !cfg.oidcClientSecret) {
     throw new Error(
@@ -65,7 +65,7 @@ export function createOidcLoginTransaction(
   const now = Date.now()
 
   // Opportunistically clean up expired OIDC transactions
-  db.delete(oidcStates).where(lt(oidcStates.expiresAt, now)).run()
+  await db.delete(oidcStates).where(lt(oidcStates.expiresAt, now)).run()
 
   const state = crypto.randomBytes(32).toString('base64url')
   const nonce = crypto.randomBytes(32).toString('base64url')
@@ -75,7 +75,8 @@ export function createOidcLoginTransaction(
   const cookieBindingHash = sha256Base64Url(cookieBindingToken)
   const returnTo = sanitizeReturnTo(returnToRaw)
 
-  db.insert(oidcStates)
+  await db
+    .insert(oidcStates)
     .values({
       state,
       nonce,
@@ -220,7 +221,7 @@ export async function completeOidcCallback(params: {
   }
 
   const db = getDb()
-  const tx = db
+  const tx = await db
     .select()
     .from(oidcStates)
     .where(eq(oidcStates.state, params.state))
@@ -228,7 +229,7 @@ export async function completeOidcCallback(params: {
 
   // Always delete state immediately so it is strictly single-use
   if (tx) {
-    db.delete(oidcStates).where(eq(oidcStates.state, params.state)).run()
+    await db.delete(oidcStates).where(eq(oidcStates.state, params.state)).run()
   }
 
   if (!tx) {

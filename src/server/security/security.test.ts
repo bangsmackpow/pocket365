@@ -3,7 +3,7 @@ import { AuthHttpError, requireCapability, requireRole } from '~/server/auth/gua
 import { resolveUserRole } from '~/server/auth/roles'
 import { createSession, SESSION_COOKIE_NAME } from '~/server/auth/session'
 import { resetConfigCache } from '~/server/config'
-import { closeDb, initDbForTesting } from '~/server/db'
+import { closeTestDb, initDbForTesting } from '~/server/db/test-d1'
 import { decryptSecret, encryptSecret, isEncryptedValue } from './crypto'
 import { sanitizeCsvCell } from './csv'
 import { verifyCsrfRequest, withSecurityHeaders } from './headers'
@@ -27,11 +27,11 @@ describe('Phase 2 Security Controls', () => {
     }
     resetConfigCache()
     resetRateLimiterForTests()
-    initDbForTesting(':memory:')
+    initDbForTesting()
   })
 
   afterEach(() => {
-    closeDb()
+    closeTestDb()
     process.env = { ...originalEnv }
     resetConfigCache()
   })
@@ -44,7 +44,6 @@ describe('Phase 2 Security Controls', () => {
     expect(blocked.allowed).toBe(false)
     expect(blocked.retryAfterSeconds).toBeGreaterThan(0)
 
-    // Window expires cleanly
     expect(checkRateLimit('auth', '1.2.3.4', { limit: 2, windowMs: 60_000 }, t0 + 61_000).allowed).toBe(true)
   })
 
@@ -55,10 +54,8 @@ describe('Phase 2 Security Controls', () => {
     expect(encrypted).not.toContain('hooks.slack.com')
     expect(decryptSecret(encrypted)).toBe(secret)
 
-    // Legacy plaintext passthrough
     expect(decryptSecret('legacy-plain')).toBe('legacy-plain')
 
-    // Tampered ciphertext must throw
     const tampered = `${encrypted.slice(0, -2)}AA`
     expect(() => decryptSecret(tampered)).toThrow()
   })
@@ -124,12 +121,12 @@ describe('Phase 2 Security Controls', () => {
     expect(sanitizeCsvCell('normal@contoso.com')).toBe('normal@contoso.com')
   })
 
-  it('enforces 5-tier granular RBAC capabilities cleanly', () => {
+  it('enforces 5-tier granular RBAC capabilities cleanly', async () => {
     expect(resolveUserRole({ oid: '1', preferredUsername: 'owner@contoso.com' })).toBe('owner')
     expect(resolveUserRole({ oid: '2', preferredUsername: 'helpdesk@contoso.com' })).toBe('helpdesk')
     expect(resolveUserRole({ oid: '3', preferredUsername: 'auditor@contoso.com' })).toBe('security_auditor')
 
-    const { rawToken: hdToken } = createSession({
+    const { rawToken: hdToken } = await createSession({
       userOid: 'hd-1',
       userUpn: 'helpdesk@contoso.com',
       displayName: 'Helpdesk Tech',
@@ -140,8 +137,9 @@ describe('Phase 2 Security Controls', () => {
       headers: { cookie: `${SESSION_COOKIE_NAME}=${hdToken}` },
     })
 
-    // Helpdesk can perform helpdesk actions, but is blocked 403 from admin mutations
-    expect(requireCapability('helpdesk.actions', hdReq).role).toBe('helpdesk')
-    expect(() => requireRole('admin', hdReq, 'cis.remediate')).toThrowError(AuthHttpError)
+    expect((await requireCapability('helpdesk.actions', hdReq)).role).toBe('helpdesk')
+    await expect(requireRole('admin', hdReq, 'cis.remediate')).rejects.toThrowError(
+      AuthHttpError,
+    )
   })
 })

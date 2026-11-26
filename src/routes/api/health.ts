@@ -1,32 +1,36 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { getCloudflareEnv } from '~/server/cf/env'
 import { getConfigReadiness } from '~/server/config'
 import { checkDatabaseHealth } from '~/server/db'
-import { ensureJobWorkerStarted } from '~/server/graph/jobs'
 
 export const Route = createFileRoute('/api/health')({
   server: {
     handlers: {
       GET: async () => {
-        const dbHealth = checkDatabaseHealth()
-        if (dbHealth.ok) {
-          ensureJobWorkerStarted()
-        }
+        const dbHealth = await checkDatabaseHealth()
         const config = getConfigReadiness()
+        const cfEnv = getCloudflareEnv()
         const healthy = dbHealth.ok
 
         return Response.json(
           {
             status: healthy ? 'ok' : 'degraded',
             app: 'pocket365',
+            runtime: 'cloudflare-workers',
+            deploymentMode: config.deploymentMode,
             timestamp: new Date().toISOString(),
             checks: {
               database: dbHealth.ok ? 'ready' : 'unavailable',
+              kvBound: Boolean(cfEnv.POCKET365_KV),
+              r2Bound: Boolean(cfEnv.POCKET365_R2),
+              queueBound: Boolean(cfEnv.POCKET365_QUEUE),
               singleTenantConfigured: config.singleTenantConfigured,
               oidcConfigured: config.oidcConfigured,
               graphConfigured: config.graphConfigured,
               graphAuthMode: config.graphAuthMode,
               rbacConfigured: config.rbacConfigured,
               sessionSecretConfigured: config.sessionSecretConfigured,
+              encryptionKeyConfigured: config.encryptionKeyConfigured,
               httpsBaseUrl: config.appBaseUrlHttps,
             },
           },

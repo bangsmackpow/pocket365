@@ -1,7 +1,14 @@
 import handler, { createServerEntry } from '@tanstack/react-start/server-entry'
-import { ensureAlertSchedulerStarted } from '~/server/alerts/engine'
-import { getDb } from '~/server/db'
-import { ensureJobWorkerStarted } from '~/server/graph/jobs'
+import { useNitroHooks } from 'nitro/app'
+import {
+  setActiveWaitUntil,
+  type CloudflareEnv,
+  type Pocket365QueueMessage,
+} from '~/server/cf/env'
+import {
+  handleCloudflareQueue,
+  handleCloudflareScheduled,
+} from '~/server/cf/handlers'
 import {
   getClientIp,
   getForwardedHost,
@@ -11,21 +18,40 @@ import {
   verifyCsrfRequest,
   withSecurityHeaders,
 } from '~/server/security/headers'
-import { checkRateLimit, rateLimitResponse } from '~/server/security/rate-limit'
+import {
+  checkRateLimitAsync,
+  rateLimitResponse,
+} from '~/server/security/rate-limit'
 
-// Ensure SQLite schema migrations, background job worker, and alert scheduler initialize on startup
+// Register Cloudflare Workers Cron Trigger & Queue hooks via Nitro v3 runtime
 try {
-  getDb()
-  ensureJobWorkerStarted()
-  ensureAlertSchedulerStarted()
-} catch (err) {
-  console.error('[pocket365] Startup initialization warning:', err)
+  const hooks = useNitroHooks() as unknown as {
+    hook?: (name: string, fn: (ctx: unknown) => Promise<void> | void) => void
+  }
+  hooks.hook?.('cloudflare:scheduled', async (ctx) => {
+    const payload = ctx as {
+      controller?: ScheduledController
+      env?: CloudflareEnv
+    }
+    await handleCloudflareScheduled({
+      controller: payload.controller,
+      env: payload.env,
+    })
+  })
+  hooks.hook?.('cloudflare:queue', async (ctx) => {
+    const payload = ctx as {
+      batch?: MessageBatch<Pocket365QueueMessage>
+    }
+    if (payload.batch) {
+      await handleCloudflareQueue(payload.batch)
+    }
+  })
+} catch {
+  // Outside active Nitro runtime (e.g. unit tests)
 }
 
 /**
- * Reconstructs the request URL using X-Forwarded-Proto and X-Forwarded-Host
- * when running behind Nginx Proxy Manager so downstream handlers observe
- * the accurate external scheme and host.
+ * Reconstructs the request URL when forwarded headers are present.
  */
 function withForwardedUrl(request: Request): Request {
   const forwardedProto = getForwardedProto(request)
@@ -69,38 +95,50 @@ function withForwardedUrl(request: Request): Request {
 
 export default createServerEntry({
   async fetch(request) {
-    const normalizedReq = withForwardedUrl(request)
-    const url = new URL(normalizedReq.url)
-    const pathname = url.pathname
-    const clientIp = getClientIp(normalizedReq) || 'local'
-
-    // 1. Layered Rate Limiting on Auth & API routes (excluding /api/health probe)
-    if (pathname.startsWith('/api/auth/')) {
-      const rl = checkRateLimit('auth', clientIp)
-      if (!rl.allowed) {
-        return withSecurityHeaders(rateLimitResponse(rl), normalizedReq)
-      }
-    } else if (pathname.startsWith('/api/') && pathname !== '/api/health') {
-      const rl = checkRateLimit('api', clientIp)
-      if (!rl.allowed) {
-        return withSecurityHeaders(rateLimitResponse(rl), normalizedReq)
-      }
+    const cfRequest = request as Request & {
+      waitUntil?: (promise: Promise<unknown>) => void
     }
+    setActiveWaitUntil(cfRequest.waitUntil ?? null)
 
-    // 2. CSRF Origin & Fetch-Metadata enforcement on all mutating requests
-    const csrf = verifyCsrfRequest(normalizedReq)
-    if (!csrf.ok) {
-      return withSecurityHeaders(
-        Response.json(
-          { error: 'CSRF_FORBIDDEN', message: csrf.reason },
-          { status: 403 },
-        ),
-        normalizedReq,
-      )
+    try {
+      const normalizedReq = withForwardedUrl(request)
+      const url = new URL(normalizedReq.url)
+      const pathname = url.pathname
+      const clientIp =
+        normalizedReq.headers.get('cf-connecting-ip') ||
+        getClientIp(normalizedReq) ||
+        'local'
+
+      // 1. Layered Edge Rate Limiting on Auth & API routes (excluding /api/health probe)
+      if (pathname.startsWith('/api/auth/')) {
+        const rl = await checkRateLimitAsync('auth', clientIp)
+        if (!rl.allowed) {
+          return withSecurityHeaders(rateLimitResponse(rl), normalizedReq)
+        }
+      } else if (pathname.startsWith('/api/') && pathname !== '/api/health') {
+        const rl = await checkRateLimitAsync('api', clientIp)
+        if (!rl.allowed) {
+          return withSecurityHeaders(rateLimitResponse(rl), normalizedReq)
+        }
+      }
+
+      // 2. CSRF Origin & Fetch-Metadata enforcement on all mutating requests
+      const csrf = verifyCsrfRequest(normalizedReq)
+      if (!csrf.ok) {
+        return withSecurityHeaders(
+          Response.json(
+            { error: 'CSRF_FORBIDDEN', message: csrf.reason },
+            { status: 403 },
+          ),
+          normalizedReq,
+        )
+      }
+
+      // 3. Dispatch to TanStack Start & apply HTTP security headers
+      const response = await handler.fetch(normalizedReq)
+      return withSecurityHeaders(response, normalizedReq)
+    } finally {
+      setActiveWaitUntil(null)
     }
-
-    // 3. Dispatch to TanStack Start & apply HTTP security headers
-    const response = await handler.fetch(normalizedReq)
-    return withSecurityHeaders(response, normalizedReq)
   },
 })

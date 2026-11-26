@@ -7,7 +7,7 @@ import { getGraphClient } from './client'
 import { auditDomainEmailAuth } from './dns-email-auth'
 
 export async function collectCisScan(managedTenantId?: string) {
-  const graph = getGraphClient(managedTenantId)
+  const graph = await getGraphClient(managedTenantId)
 
   const snapshot: CisTenantSnapshot = {
     authorizationPolicy: null,

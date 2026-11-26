@@ -2,10 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   formatWebhookPayload,
   recordAndDispatchAlert,
-  stopAlertScheduler,
 } from '~/server/alerts/engine'
 import { resetConfigCache } from '~/server/config'
-import { closeDb, initDbForTesting } from '~/server/db'
+import { closeTestDb, initDbForTesting } from '~/server/db/test-d1'
 import { evaluateCisBenchmarks } from './cis-benchmarks'
 import type { MicrosoftGraphClient } from './client'
 import {
@@ -13,18 +12,16 @@ import {
   evaluateDmarcRecord,
   evaluateSpfRecord,
 } from './dns-email-auth'
-import { enqueueJob, processNextQueuedJob, stopJobWorker } from './jobs'
+import { enqueueJob, processNextQueuedJob } from './jobs'
 
 describe('Deep CIS Expansion, DNS Email Auth, BEC Sweep & Alerting', () => {
   beforeEach(() => {
     resetConfigCache()
-    initDbForTesting(':memory:')
+    initDbForTesting()
   })
 
   afterEach(() => {
-    stopJobWorker()
-    stopAlertScheduler()
-    closeDb()
+    closeTestDb()
     resetConfigCache()
   })
 
@@ -50,14 +47,16 @@ describe('Deep CIS Expansion, DNS Email Auth, BEC Sweep & Alerting', () => {
         return []
       },
       resolveCname: async (host) => {
-        if (host.startsWith('selector1.')) return ['selector1-contoso._domainkey.contoso.onmicrosoft.com']
+        if (host.startsWith('selector1.')) {
+          return ['selector1-contoso._domainkey.contoso.onmicrosoft.com']
+        }
         return []
       },
     })
 
     expect(audit.spfStatus).toBe('pass')
     expect(audit.dmarcStatus).toBe('pass')
-    expect(audit.dkimStatus).toBe('warn') // only selector1 found
+    expect(audit.dkimStatus).toBe('warn')
   })
 
   it('evaluates expanded CIS controls for DNS, Auth Methods, and SharePoint', () => {
@@ -155,7 +154,7 @@ describe('Deep CIS Expansion, DNS Email Auth, BEC Sweep & Alerting', () => {
       ]),
     } as unknown as MicrosoftGraphClient
 
-    enqueueJob({
+    await enqueueJob({
       type: 'mailbox.bec_sweep',
       payload: { onlyLicensed: true, maxUsers: 50 },
       actor: { oid: 'admin-1', upn: 'admin@contoso.com', role: 'admin' },
@@ -165,7 +164,7 @@ describe('Deep CIS Expansion, DNS Email Auth, BEC Sweep & Alerting', () => {
     const finished = await processNextQueuedJob(fakeGraph, 0)
     expect(finished?.status).toBe('completed')
     const parsed = JSON.parse(finished!.resultJson!)
-    expect(parsed.scannedUsers).toBe(1) // unlicensed skipped
+    expect(parsed.scannedUsers).toBe(1)
     expect(parsed.highRiskCount).toBe(1)
     expect(parsed.findings[0].rule.forwardTargets).toEqual([
       'drop@attacker.example',

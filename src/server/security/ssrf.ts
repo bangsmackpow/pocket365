@@ -1,6 +1,37 @@
-import dns from 'node:dns/promises'
-import net from 'node:net'
 import { getConfig } from '~/server/config'
+import { dohDnsLookup } from './doh'
+
+const IPV4_REGEX =
+  /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
+
+export function isIPv4(input: string): boolean {
+  return IPV4_REGEX.test(input)
+}
+
+export function isIPv6(input: string): boolean {
+  const s = input.trim().toLowerCase()
+  if (!s.includes(':') || s.includes(':::')) return false
+  // Handle IPv4-mapped suffix like ::ffff:127.0.0.1
+  const lastColon = s.lastIndexOf(':')
+  const tail = s.slice(lastColon + 1)
+  if (tail.includes('.')) {
+    if (!isIPv4(tail)) return false
+    const prefix = s.slice(0, lastColon)
+    return /^[0-9a-f:]+$/.test(prefix)
+  }
+  const halves = s.split('::')
+  if (halves.length > 2) return false
+  const groups = s.split(':').filter((g) => g.length > 0)
+  if (halves.length === 1 && groups.length !== 8) return false
+  if (halves.length === 2 && groups.length > 7) return false
+  return groups.every((g) => /^[0-9a-f]{1,4}$/.test(g))
+}
+
+export function isIP(input: string): 0 | 4 | 6 {
+  if (isIPv4(input)) return 4
+  if (isIPv6(input)) return 6
+  return 0
+}
 
 export function isPrivateOrReservedIp(ip: string): boolean {
   const normalized = ip.trim().toLowerCase()
@@ -8,12 +39,12 @@ export function isPrivateOrReservedIp(ip: string): boolean {
   // Handle IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1)
   if (normalized.startsWith('::ffff:')) {
     const v4Part = normalized.slice(7)
-    if (net.isIPv4(v4Part)) {
+    if (isIPv4(v4Part)) {
       return isPrivateOrReservedIp(v4Part)
     }
   }
 
-  if (net.isIPv4(normalized)) {
+  if (isIPv4(normalized)) {
     const octets = normalized.split('.').map((n) => Number.parseInt(n, 10))
     const a = octets[0] ?? 0
     const b = octets[1] ?? 0
@@ -29,7 +60,7 @@ export function isPrivateOrReservedIp(ip: string): boolean {
     return false
   }
 
-  if (net.isIPv6(normalized)) {
+  if (isIPv6(normalized)) {
     if (normalized === '::' || normalized === '::1') return true
     if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true // ULA fc00::/7
     if (
@@ -63,13 +94,11 @@ export interface DnsLookupLike {
 
 /**
  * Validates outbound webhook URLs against SSRF (blocking private IPs,
- * loopback, Docker bridge hosts, and cloud metadata endpoints).
- * Set ALLOW_PRIVATE_WEBHOOKS=true only if intentionally delivering to
- * a trusted internal LAN relay (e.g., self-hosted n8n).
+ * loopback, internal hosts, and cloud metadata endpoints) using DNS-over-HTTPS.
  */
 export async function assertSafeWebhookUrl(
   rawUrl: string,
-  resolver: DnsLookupLike = dns,
+  resolver: DnsLookupLike = dohDnsLookup,
 ): Promise<URL> {
   let parsed: URL
   try {
@@ -105,7 +134,7 @@ export async function assertSafeWebhookUrl(
     )
   }
 
-  if (net.isIP(hostname)) {
+  if (isIP(hostname)) {
     if (isPrivateOrReservedIp(hostname)) {
       throw new Error(
         `Webhook IP "${hostname}" is private or reserved and blocked by SSRF protection.`,

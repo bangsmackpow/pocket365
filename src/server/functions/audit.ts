@@ -3,11 +3,7 @@ import { getRequest } from '@tanstack/react-start/server'
 import { z } from 'zod'
 import { requireRole, requireSession } from '~/server/auth/guards'
 import { listAuditLogs } from '~/server/db/audit'
-import {
-  ensureJobWorkerStarted,
-  listJobs,
-  retryFailedJob,
-} from '~/server/graph/jobs'
+import { listJobs, retryFailedJob } from '~/server/graph/jobs'
 import { getClientIp } from '~/server/http/proxy'
 
 const listAuditInputSchema = z.object({
@@ -19,9 +15,9 @@ const listAuditInputSchema = z.object({
 export const listAuditLogsFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => listAuditInputSchema.parse(input ?? {}))
   .handler(async ({ data }) => {
-    requireSession()
+    await requireSession()
     return {
-      logs: listAuditLogs({
+      logs: await listAuditLogs({
         limit: data.limit ?? 100,
         status: data.status ?? 'all',
         search: data.search,
@@ -37,10 +33,9 @@ const listJobsInputSchema = z.object({
 export const listJobsFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => listJobsInputSchema.parse(input ?? {}))
   .handler(async ({ data }) => {
-    requireSession()
-    ensureJobWorkerStarted()
+    await requireSession()
     return {
-      jobs: listJobs({
+      jobs: await listJobs({
         limit: data.limit ?? 50,
         status: data.status ?? 'all',
       }),
@@ -54,8 +49,8 @@ const retryJobInputSchema = z.object({
 export const retryJobFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => retryJobInputSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'job.retry')
-    const job = retryFailedJob(
+    const session = await requireRole('admin', undefined, 'job.retry')
+    const job = await retryFailedJob(
       data.jobId,
       { oid: session.oid, upn: session.upn, role: session.role },
       getClientIp(getRequest()),

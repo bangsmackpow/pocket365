@@ -28,10 +28,6 @@ export interface OutgoingAlert {
 }
 
 const DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000
-const SCHEDULER_INTERVAL_MS = 30 * 60 * 1000 // Every 30 minutes
-
-let schedulerStarted = false
-let schedulerTimer: NodeJS.Timeout | null = null
 
 export function formatWebhookPayload(
   provider: WebhookProvider,
@@ -143,7 +139,7 @@ export async function recordAndDispatchAlert(
   const now = Date.now()
 
   if (!options.skipDedupe) {
-    const recent = db
+    const recent = await db
       .select()
       .from(alertEvents)
       .where(
@@ -159,7 +155,7 @@ export async function recordAndDispatchAlert(
     }
   }
 
-  const webhooks = db.select().from(alertWebhooks).all()
+  const webhooks = await db.select().from(alertWebhooks).all()
   const result = await deliverAlertToWebhooks(
     alert,
     webhooks,
@@ -190,7 +186,7 @@ export async function recordAndDispatchAlert(
     createdAt: now,
   }
 
-  db.insert(alertEvents).values(event).run()
+  await db.insert(alertEvents).values(event).run()
   return { skipped: false, event }
 }
 
@@ -202,9 +198,10 @@ export interface AlertRunSummary {
 }
 
 export async function runAutomatedAlertChecks(
-  graph: MicrosoftGraphClient = getGraphClient(),
+  explicitGraph?: MicrosoftGraphClient,
   fetchImpl: typeof fetch = fetch,
 ): Promise<AlertRunSummary> {
+  const graph = explicitGraph ?? (await getGraphClient())
   const db = getDb()
   const alertsToSend: OutgoingAlert[] = []
   const rulesEvaluated: string[] = []
@@ -220,7 +217,7 @@ export async function runAutomatedAlertChecks(
         .sort()
     }
 
-    const prevBaseline = db
+    const prevBaseline = await db
       .select()
       .from(policySnapshots)
       .where(eq(policySnapshots.snapshotType, 'directory_roles'))
@@ -250,8 +247,9 @@ export async function runAutomatedAlertChecks(
       }
     }
 
-    // Persist refreshed role baseline in SQLite
-    db.insert(policySnapshots)
+    // Persist refreshed role baseline in D1
+    await db
+      .insert(policySnapshots)
       .values({
         id: crypto.randomUUID(),
         snapshotType: 'directory_roles',
@@ -293,7 +291,7 @@ export async function runAutomatedAlertChecks(
 
   // 3. CIS Benchmark Regression vs Latest Snapshot
   try {
-    const latestCis = db
+    const latestCis = await db
       .select()
       .from(cisSnapshots)
       .orderBy(desc(cisSnapshots.createdAt))
@@ -380,33 +378,18 @@ export async function runAutomatedAlertChecks(
   }
 }
 
-export function ensureAlertSchedulerStarted(): void {
-  if (schedulerStarted) return
-  schedulerStarted = true
-
-  schedulerTimer = setInterval(async () => {
-    try {
-      if (!getConfigReadiness().graphConfigured) return
-      const db = getDb()
-      const hasEnabledHook = db
-        .select()
-        .from(alertWebhooks)
-        .where(eq(alertWebhooks.enabled, 1))
-        .limit(1)
-        .get()
-      if (!hasEnabledHook) return
-      await runAutomatedAlertChecks()
-    } catch {
-      // Keep scheduler resilient
-    }
-  }, SCHEDULER_INTERVAL_MS)
-  schedulerTimer.unref?.()
-}
-
-export function stopAlertScheduler(): void {
-  if (schedulerTimer) {
-    clearInterval(schedulerTimer)
-    schedulerTimer = null
-  }
-  schedulerStarted = false
+/**
+ * Invoked by Cloudflare Cron Trigger (`triggers.crons` in wrangler.jsonc).
+ */
+export async function runScheduledAlertSweep(): Promise<AlertRunSummary | null> {
+  if (!getConfigReadiness().graphConfigured) return null
+  const db = getDb()
+  const hasEnabledHook = await db
+    .select()
+    .from(alertWebhooks)
+    .where(eq(alertWebhooks.enabled, 1))
+    .limit(1)
+    .get()
+  if (!hasEnabledHook) return null
+  return runAutomatedAlertChecks()
 }

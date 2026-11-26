@@ -10,7 +10,7 @@ export const Route = createFileRoute('/api/auth/login')({
         try {
           const url = new URL(request.url)
           const returnTo = url.searchParams.get('returnTo')
-          const tx = createOidcLoginTransaction(returnTo, request)
+          const tx = await createOidcLoginTransaction(returnTo, request)
 
           const headers = new Headers({
             Location: tx.authorizationUrl,
@@ -24,7 +24,9 @@ export const Route = createFileRoute('/api/auth/login')({
           return new Response(null, { status: 302, headers })
         } catch (err) {
           const reason = encodeURIComponent(
-            err instanceof Error ? err.message : 'OIDC login initialization failed.',
+            err instanceof Error
+              ? err.message
+              : 'OIDC login initialization failed.',
           )
           return new Response(null, {
             status: 302,

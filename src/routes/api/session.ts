@@ -5,7 +5,7 @@ export const Route = createFileRoute('/api/session')({
   server: {
     handlers: {
       GET: async ({ request }) => {
-        const auth = guardApiRole('viewer', request)
+        const auth = await guardApiRole('viewer', request)
         if (!auth.ok) return auth.response
         return Response.json(
           {

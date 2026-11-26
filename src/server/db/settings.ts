@@ -18,9 +18,9 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = {
   bulkJobDelayMs: 150,
 }
 
-export function getRuntimeSettings(): RuntimeSettings {
+export async function getRuntimeSettings(): Promise<RuntimeSettings> {
   const db = getDb()
-  const rows = db.select().from(appSettings).all()
+  const rows = await db.select().from(appSettings).all()
   const merged: Record<string, unknown> = { ...DEFAULT_RUNTIME_SETTINGS }
 
   for (const row of rows) {
@@ -37,11 +37,11 @@ export function getRuntimeSettings(): RuntimeSettings {
   return parsed.success ? parsed.data : DEFAULT_RUNTIME_SETTINGS
 }
 
-export function updateRuntimeSettings(
+export async function updateRuntimeSettings(
   updates: Partial<RuntimeSettings>,
   updatedBy: string,
-): RuntimeSettings {
-  const current = getRuntimeSettings()
+): Promise<RuntimeSettings> {
+  const current = await getRuntimeSettings()
   const next = runtimeSettingsSchema.parse({
     ...current,
     ...updates,
@@ -52,7 +52,8 @@ export function updateRuntimeSettings(
   const entries = Object.entries(next) as Array<[keyof RuntimeSettings, unknown]>
 
   for (const [key, value] of entries) {
-    db.insert(appSettings)
+    await db
+      .insert(appSettings)
       .values({
         key,
         valueJson: JSON.stringify(value),

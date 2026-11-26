@@ -16,10 +16,7 @@ import {
   parseCookies,
 } from '~/server/http/proxy'
 
-function redirectWithClearOidc(
-  path: string,
-  request: Request,
-): Response {
+function redirectWithClearOidc(path: string, request: Request): Response {
   const headers = new Headers({
     Location: buildCanonicalUrl(path, request),
     'Cache-Control': 'no-store',
@@ -38,7 +35,7 @@ export const Route = createFileRoute('/api/auth/callback')({
         const ipAddress = getClientIp(request)
 
         if (errorParam) {
-          recordAuditLog({
+          await recordAuditLog({
             actorOid: 'unknown',
             actorUpn: 'unknown',
             actorRole: 'none',
@@ -78,7 +75,8 @@ export const Route = createFileRoute('/api/auth/callback')({
             getConfigReadiness().graphConfigured
           ) {
             try {
-              groups = await getGraphClient().getUserMemberGroupIds(identity.oid)
+              const graph = await getGraphClient()
+              groups = await graph.getUserMemberGroupIds(identity.oid)
             } catch {
               // Proceed with token claims if Graph group lookup is unavailable
             }
@@ -93,7 +91,7 @@ export const Route = createFileRoute('/api/auth/callback')({
           })
 
           if (!role) {
-            recordAuditLog({
+            await recordAuditLog({
               actorOid: identity.oid,
               actorUpn: identity.upn,
               actorRole: 'none',
@@ -101,7 +99,8 @@ export const Route = createFileRoute('/api/auth/callback')({
               target: 'pocket365',
               status: 'failure',
               details: {
-                reason: 'User not in ADMIN_OIDS_OR_GROUPS or VIEWER_OIDS_OR_GROUPS',
+                reason:
+                  'User not in ADMIN_OIDS_OR_GROUPS or VIEWER_OIDS_OR_GROUPS',
                 groupCount: groups.length,
               },
               ipAddress,
@@ -109,7 +108,7 @@ export const Route = createFileRoute('/api/auth/callback')({
             return redirectWithClearOidc('/login?error=unauthorized', request)
           }
 
-          const { rawToken } = createSession({
+          const { rawToken } = await createSession({
             userOid: identity.oid,
             userUpn: identity.upn,
             displayName: identity.displayName,
@@ -119,7 +118,7 @@ export const Route = createFileRoute('/api/auth/callback')({
             userAgent: request.headers.get('user-agent'),
           })
 
-          recordAuditLog({
+          await recordAuditLog({
             actorOid: identity.oid,
             actorUpn: identity.upn,
             actorRole: role,
@@ -140,8 +139,10 @@ export const Route = createFileRoute('/api/auth/callback')({
           return new Response(null, { status: 302, headers })
         } catch (err) {
           const message =
-            err instanceof Error ? err.message : 'Authentication callback failed.'
-          recordAuditLog({
+            err instanceof Error
+              ? err.message
+              : 'Authentication callback failed.'
+          await recordAuditLog({
             actorOid: 'unknown',
             actorUpn: 'unknown',
             actorRole: 'none',

@@ -41,11 +41,11 @@ function parseJsonStringArray(raw: string): string[] {
 
 export const getOnboardingDataFn = createServerFn({ method: 'GET' }).handler(
   async () => {
-    requireSession()
+    await requireSession()
     const db = getDb()
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
-    const rawTemplates = db
+    const rawTemplates = await db
       .select()
       .from(onboardingTemplates)
       .orderBy(desc(onboardingTemplates.updatedAt))
@@ -99,12 +99,13 @@ const templateInputSchema = z.object({
 export const saveOnboardingTemplateFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => templateInputSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'onboarding.save_template')
+    const session = await requireRole('admin', undefined, 'onboarding.save_template')
     const db = getDb()
     const id = data.id ?? crypto.randomUUID()
     const now = Date.now()
 
-    db.insert(onboardingTemplates)
+    await db
+      .insert(onboardingTemplates)
       .values({
         id,
         name: data.name.trim(),
@@ -138,14 +139,18 @@ export const saveOnboardingTemplateFn = createServerFn({ method: 'POST' })
       })
       .run()
 
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
       action: 'onboarding.save_template',
       target: data.name.trim(),
       status: 'success',
-      details: { id, skuCount: data.skuIds.length, groupCount: data.groupIds.length },
+      details: {
+        id,
+        skuCount: data.skuIds.length,
+        groupCount: data.groupIds.length,
+      },
       ipAddress: getClientIp(getRequest()),
     })
 
@@ -159,13 +164,14 @@ const deleteTemplateSchema = z.object({
 export const deleteOnboardingTemplateFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => deleteTemplateSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'onboarding.delete_template')
+    const session = await requireRole('admin', undefined, 'onboarding.delete_template')
     const db = getDb()
-    db.delete(onboardingTemplates)
+    await db
+      .delete(onboardingTemplates)
       .where(eq(onboardingTemplates.id, data.id))
       .run()
 
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -187,7 +193,10 @@ const onboardUserSchema = z.object({
     .string()
     .min(1)
     .max(64)
-    .regex(/^[a-zA-Z0-9._-]+$/, 'Username can only contain letters, numbers, dots, underscores, or hyphens'),
+    .regex(
+      /^[a-zA-Z0-9._-]+$/,
+      'Username can only contain letters, numbers, dots, underscores, or hyphens',
+    ),
   domain: z.string().min(3).max(120),
   department: z.string().max(120).default(''),
   jobTitle: z.string().max(120).default(''),
@@ -202,10 +211,10 @@ const onboardUserSchema = z.object({
 export const onboardNewUserFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => onboardUserSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'user.onboard')
-    requireEntitlement('users.onboarding', session)
+    const session = await requireRole('admin', undefined, 'user.onboard')
+    await requireEntitlement('users.onboarding', session)
     const ipAddress = getClientIp(getRequest())
-    const graph = getGraphClient()
+    const graph = await getGraphClient()
 
     const upn = `${data.mailNickname.trim()}@${data.domain.trim()}`
     const temporaryPassword = generateStrongPassword(20)
@@ -231,7 +240,10 @@ export const onboardNewUserFn = createServerFn({ method: 'POST' })
       if (data.skuIds.length > 0) {
         try {
           await graph.assignUserLicenses(created.id, data.skuIds, [])
-          steps.push({ step: `assign_licenses (${data.skuIds.length})`, ok: true })
+          steps.push({
+            step: `assign_licenses (${data.skuIds.length})`,
+            ok: true,
+          })
         } catch (err) {
           steps.push({
             step: 'assign_licenses',
@@ -272,8 +284,8 @@ export const onboardNewUserFn = createServerFn({ method: 'POST' })
         }
       }
 
-      // Never store temporaryPassword or temporaryAccessPass in SQLite audit_logs
-      recordAuditLog({
+      // Never store temporaryPassword or temporaryAccessPass in D1 audit_logs
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,
@@ -299,7 +311,7 @@ export const onboardNewUserFn = createServerFn({ method: 'POST' })
         steps,
       }
     } catch (err) {
-      recordAuditLog({
+      await recordAuditLog({
         actorOid: session.oid,
         actorUpn: session.upn,
         actorRole: session.role,

@@ -1558,16 +1558,18 @@ export function clearAllTenantGraphClients(): void {
  * 2) the authenticated session's currently selected tenant (Multi-Tenant Switcher), OR
  * 3) the default primary single-tenant env configuration.
  */
-export function getGraphClient(explicitManagedTenantId?: string): MicrosoftGraphClient {
+export async function getGraphClient(
+  explicitManagedTenantId?: string,
+): Promise<MicrosoftGraphClient> {
   let tenantRow = explicitManagedTenantId
-    ? getManagedTenantById(explicitManagedTenantId)
+    ? await getManagedTenantById(explicitManagedTenantId)
     : null
 
   if (!tenantRow) {
     try {
-      const session = getCurrentSession()
+      const session = await getCurrentSession()
       if (session?.activeTenantId) {
-        tenantRow = resolveActiveTenantForSession(session)
+        tenantRow = await resolveActiveTenantForSession(session)
       }
     } catch {
       tenantRow = null

@@ -2,7 +2,7 @@ import { getRequest, setResponseStatus } from '@tanstack/react-start/server'
 import { recordAuditLog } from '~/server/db/audit'
 import type { UserRole } from '~/server/db/schema'
 import { getClientIp } from '~/server/http/proxy'
-import { enforceRateLimit } from '~/server/security/rate-limit'
+import { enforceRateLimitAsync } from '~/server/security/rate-limit'
 import { hasCapability, isAdminRole, type AppCapability } from './roles'
 import { getSessionFromRequest, type SessionUser } from './session'
 
@@ -35,7 +35,9 @@ function safeSetStatus(status: number): void {
   }
 }
 
-export function getCurrentSession(explicitRequest?: Request): SessionUser | null {
+export async function getCurrentSession(
+  explicitRequest?: Request,
+): Promise<SessionUser | null> {
   const req = safeGetCurrentRequest(explicitRequest)
   return getSessionFromRequest(req)
 }
@@ -44,9 +46,11 @@ export function getCurrentSession(explicitRequest?: Request): SessionUser | null
  * Ensures the caller holds a valid, unexpired server-side session.
  * Sets HTTP 401 and throws AuthHttpError when unauthenticated.
  */
-export function requireSession(explicitRequest?: Request): SessionUser {
+export async function requireSession(
+  explicitRequest?: Request,
+): Promise<SessionUser> {
   const req = safeGetCurrentRequest(explicitRequest)
-  const session = getSessionFromRequest(req)
+  const session = await getSessionFromRequest(req)
   if (!session) {
     safeSetStatus(401)
     throw new AuthHttpError(401, 'Authentication required. Please sign in.')
@@ -58,13 +62,13 @@ export function requireSession(explicitRequest?: Request): SessionUser {
  * Strictly enforces RBAC on the server for every protected/mutating server function
  * and API route handler. Returns 403 Forbidden when unauthorized.
  */
-export function requireRole(
+export async function requireRole(
   requiredRole: UserRole,
   explicitRequest?: Request,
   actionContext?: string,
-): SessionUser {
+): Promise<SessionUser> {
   const req = safeGetCurrentRequest(explicitRequest)
-  const session = requireSession(req)
+  const session = await requireSession(req)
 
   const allowed =
     requiredRole === 'viewer'
@@ -81,7 +85,7 @@ export function requireRole(
 
   if (!allowed) {
     safeSetStatus(403)
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -98,7 +102,7 @@ export function requireRole(
   }
 
   if (requiredRole !== 'viewer') {
-    enforceRateLimit('mutation', session.oid, req)
+    await enforceRateLimitAsync('mutation', session.oid, req)
   }
 
   return session
@@ -108,17 +112,17 @@ export function requireRole(
  * Capability-based server guard supporting granular RBAC roles
  * (owner, admin, helpdesk, security_auditor, viewer) + mutation rate limiting.
  */
-export function requireCapability(
+export async function requireCapability(
   capability: AppCapability,
   explicitRequest?: Request,
   actionContext?: string,
-): SessionUser {
+): Promise<SessionUser> {
   const req = safeGetCurrentRequest(explicitRequest)
-  const session = requireSession(req)
+  const session = await requireSession(req)
 
   if (!hasCapability(session.role, capability)) {
     safeSetStatus(403)
-    recordAuditLog({
+    await recordAuditLog({
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -135,7 +139,7 @@ export function requireCapability(
   }
 
   if (capability !== 'read') {
-    enforceRateLimit('mutation', session.oid, req)
+    await enforceRateLimitAsync('mutation', session.oid, req)
   }
 
   return session
@@ -144,15 +148,16 @@ export function requireCapability(
 /**
  * Helper for raw HTTP API route handlers to return standard 401/403 JSON responses.
  */
-export function guardApiRole(
+export async function guardApiRole(
   requiredRole: UserRole,
   request: Request,
   actionContext?: string,
-):
+): Promise<
   | { ok: true; session: SessionUser }
-  | { ok: false; response: Response } {
+  | { ok: false; response: Response }
+> {
   try {
-    const session = requireRole(requiredRole, request, actionContext)
+    const session = await requireRole(requiredRole, request, actionContext)
     return { ok: true, session }
   } catch (err) {
     if (err instanceof AuthHttpError) {
