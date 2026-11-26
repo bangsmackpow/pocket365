@@ -125,7 +125,21 @@ npm run db:migrate:remote# Apply D1 migrations to remote D1
 
 ---
 
-## 4. GitHub Actions CI / CD
+## 4. Operating in Hosted SaaS Mode (`DEPLOYMENT_MODE=saas`)
+
+Set `DEPLOYMENT_MODE=saas` in your Cloudflare Worker vars/secrets along with:
+- A **Multitenant** Entra App Registration (`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `GRAPH_CLIENT_ID` + X.509 certificate `GRAPH_CERT_THUMBPRINT` / `GRAPH_CERT_PRIVATE_KEY`).
+- Stripe secrets: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `STRIPE_PRICE_SAAS`.
+
+How SaaS onboarding works with **zero customer client secrets**:
+1. Any M365 organization admin clicks **Continue with Microsoft Entra ID** (`/organizations` OIDC endpoint; personal MSA accounts are rejected).
+2. Pocket365 auto-provisions an isolated Organization keyed by their home Entra Tenant ID (`organization_id` scoping across D1, KV, and R2) and redirects them to `/billing`.
+3. They subscribe via **Stripe Checkout** (with self-service **Stripe Billing Portal** for invoices/upgrades), unlocking all features and unlimited multi-tenant MSP management.
+4. They connect customer M365 tenants via **1-Click Microsoft Admin Consent** (`/api/tenants/consent-callback`) — storing only the customer's public Tenant GUID, with zero per-customer secrets in D1.
+
+---
+
+## 5. GitHub Actions CI / CD
 
 [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml) runs `build`, `typecheck`, `lint`, `test`, and `npm audit --omit=dev --audit-level=high` on every PR and push to `main`.
 

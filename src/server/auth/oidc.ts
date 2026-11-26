@@ -1,23 +1,29 @@
 import crypto from 'node:crypto'
 import { eq, lt } from 'drizzle-orm'
-import { createRemoteJWKSet, jwtVerify } from 'jose'
+import { createRemoteJWKSet, decodeJwt, jwtVerify } from 'jose'
+import { getConfig } from '~/server/config'
 import { getDb } from '~/server/db'
 import { oidcStates } from '~/server/db/schema'
 import { buildCanonicalUrl, sanitizeReturnTo } from '~/server/http/proxy'
 import { getEffectiveEntraConfig } from '~/server/setup/service'
 
 const OIDC_STATE_TTL_MS = 10 * 60 * 1000 // 10 minutes
+const CONSUMER_MSA_TENANT_ID = '9188040d-6c67-4c5b-b112-36a304b66dad'
+const GUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>()
 
-function getTenantJwks(tenantId: string): ReturnType<typeof createRemoteJWKSet> {
-  const existing = jwksCache.get(tenantId)
+function getTenantJwks(
+  authoritySegment: string,
+): ReturnType<typeof createRemoteJWKSet> {
+  const existing = jwksCache.get(authoritySegment)
   if (existing) return existing
   const jwksUri = new URL(
-    `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/discovery/v2.0/keys`,
+    `https://login.microsoftonline.com/${encodeURIComponent(authoritySegment)}/discovery/v2.0/keys`,
   )
   const jwks = createRemoteJWKSet(jwksUri)
-  jwksCache.set(tenantId, jwks)
+  jwksCache.set(authoritySegment, jwks)
   return jwks
 }
 
@@ -32,8 +38,8 @@ function constantTimeEquals(a: string, b: string): boolean {
   return crypto.timingSafeEqual(bufA, bufB)
 }
 
-export function getEntraEndpoints(tenantId: string) {
-  const encodedTenant = encodeURIComponent(tenantId)
+export function getEntraEndpoints(tenantIdOrAuthority: string) {
+  const encodedTenant = encodeURIComponent(tenantIdOrAuthority)
   const base = `https://login.microsoftonline.com/${encodedTenant}`
   return {
     issuer: `${base}/v2.0`,
@@ -54,21 +60,24 @@ export async function createOidcLoginTransaction(
   returnToRaw?: string | null,
   request?: Request,
 ): Promise<OidcLoginInitResult> {
+  const cfg = getConfig()
   const effective = await getEffectiveEntraConfig()
-  if (
-    !effective.entraTenantId ||
-    !effective.oidcClientId ||
-    !effective.oidcClientSecret
-  ) {
+  const isSaas = cfg.deploymentMode === 'saas'
+
+  if (!effective.oidcClientId || !effective.oidcClientSecret) {
     throw new Error(
-      'OIDC is not configured. Complete /setup or configure ENTRA_TENANT_ID, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET.',
+      'OIDC is not configured. Complete /setup or configure OIDC_CLIENT_ID and OIDC_CLIENT_SECRET.',
+    )
+  }
+  if (!isSaas && !effective.entraTenantId) {
+    throw new Error(
+      'ENTRA_TENANT_ID is required in self_hosted mode. Complete /setup or set ENTRA_TENANT_ID.',
     )
   }
 
   const db = getDb()
   const now = Date.now()
 
-  // Opportunistically clean up expired OIDC transactions
   await db.delete(oidcStates).where(lt(oidcStates.expiresAt, now)).run()
 
   const state = crypto.randomBytes(32).toString('base64url')
@@ -92,7 +101,9 @@ export async function createOidcLoginTransaction(
     })
     .run()
 
-  const endpoints = getEntraEndpoints(effective.entraTenantId)
+  // SaaS mode uses `/organizations` so any Microsoft 365 work/school org can sign in
+  const authority = isSaas ? 'organizations' : effective.entraTenantId
+  const endpoints = getEntraEndpoints(authority)
   const redirectUri = buildCanonicalUrl('/api/auth/callback', request)
 
   const params = new URLSearchParams({
@@ -115,6 +126,7 @@ export async function createOidcLoginTransaction(
 }
 
 export interface VerifiedOidcIdentity {
+  tenantId: string
   oid: string
   upn: string
   preferredUsername?: string
@@ -128,14 +140,17 @@ export interface VerifiedOidcIdentity {
 export interface VerifyIdTokenParams {
   idToken: string
   expectedNonce: string
+  /** Fixed tenant GUID in single-tenant mode, or `'organizations'` / `'common'` in SaaS multi-tenant mode */
   tenantId: string
   clientId: string
+  multiTenant?: boolean
   jwks?: ReturnType<typeof createRemoteJWKSet> | Parameters<typeof jwtVerify>[1]
 }
 
 export async function verifyEntraIdToken(
   params: VerifyIdTokenParams,
 ): Promise<{
+  tenantId: string
   oid: string
   upn: string
   preferredUsername?: string
@@ -144,24 +159,65 @@ export async function verifyEntraIdToken(
   groups: string[]
   hasGroupsOverage: boolean
 }> {
-  const endpoints = getEntraEndpoints(params.tenantId)
-  const keyResolver = params.jwks ?? getTenantJwks(params.tenantId)
+  const isMultiTenant =
+    Boolean(params.multiTenant) ||
+    params.tenantId === 'organizations' ||
+    params.tenantId === 'common'
+
+  let expectedIssuer: string
+  let authorityForJwks: string
+
+  if (isMultiTenant) {
+    // Extract unverified `tid` only to derive the expected Entra issuer, then strictly verify
+    // signature + iss + aud via jwtVerify before trusting any claim.
+    const unverified = decodeJwt(params.idToken)
+    const rawTid = typeof unverified.tid === 'string' ? unverified.tid.trim() : ''
+    if (!GUID_REGEX.test(rawTid)) {
+      throw new Error('ID token is missing a valid organizational tenant ID (tid).')
+    }
+    if (rawTid.toLowerCase() === CONSUMER_MSA_TENANT_ID) {
+      throw new Error(
+        'Personal Microsoft accounts are not supported. Please sign in with a Microsoft 365 work or school account.',
+      )
+    }
+    expectedIssuer = `https://login.microsoftonline.com/${rawTid}/v2.0`
+    authorityForJwks = 'organizations'
+  } else {
+    expectedIssuer = getEntraEndpoints(params.tenantId).issuer
+    authorityForJwks = params.tenantId
+  }
+
+  const keyResolver = params.jwks ?? getTenantJwks(authorityForJwks)
 
   const { payload } = await jwtVerify(
     params.idToken,
     keyResolver as Parameters<typeof jwtVerify>[1],
     {
-      issuer: endpoints.issuer,
+      issuer: expectedIssuer,
       audience: params.clientId,
       algorithms: ['RS256'],
       clockTolerance: 30,
     },
   )
 
-  // Strict single-tenant check
   const tid = typeof payload.tid === 'string' ? payload.tid : ''
-  if (!tid || tid.toLowerCase() !== params.tenantId.toLowerCase()) {
-    throw new Error('ID token tenant (tid) does not match configured ENTRA_TENANT_ID.')
+  if (!tid || !GUID_REGEX.test(tid)) {
+    throw new Error('ID token is missing required tenant identifier (tid).')
+  }
+
+  if (isMultiTenant) {
+    if (tid.toLowerCase() === CONSUMER_MSA_TENANT_ID) {
+      throw new Error('Personal Microsoft accounts are not allowed.')
+    }
+    if (
+      payload.iss !== `https://login.microsoftonline.com/${tid}/v2.0`
+    ) {
+      throw new Error('ID token issuer does not match its tenant (tid).')
+    }
+  } else if (tid.toLowerCase() !== params.tenantId.toLowerCase()) {
+    throw new Error(
+      'ID token tenant (tid) does not match configured ENTRA_TENANT_ID.',
+    )
   }
 
   // Strict nonce validation
@@ -203,6 +259,7 @@ export async function verifyEntraIdToken(
   )
 
   return {
+    tenantId: tid,
     oid,
     upn,
     preferredUsername,
@@ -219,13 +276,15 @@ export async function completeOidcCallback(params: {
   cookieBindingToken: string
   request?: Request
 }): Promise<VerifiedOidcIdentity> {
+  const cfg = getConfig()
   const effective = await getEffectiveEntraConfig()
-  if (
-    !effective.entraTenantId ||
-    !effective.oidcClientId ||
-    !effective.oidcClientSecret
-  ) {
+  const isSaas = cfg.deploymentMode === 'saas'
+
+  if (!effective.oidcClientId || !effective.oidcClientSecret) {
     throw new Error('OIDC configuration is incomplete.')
+  }
+  if (!isSaas && !effective.entraTenantId) {
+    throw new Error('ENTRA_TENANT_ID is missing.')
   }
 
   const db = getDb()
@@ -256,7 +315,8 @@ export async function completeOidcCallback(params: {
     throw new Error('OIDC browser binding cookie validation failed.')
   }
 
-  const endpoints = getEntraEndpoints(effective.entraTenantId)
+  const authority = isSaas ? 'organizations' : effective.entraTenantId
+  const endpoints = getEntraEndpoints(authority)
   const redirectUri = buildCanonicalUrl('/api/auth/callback', params.request)
 
   const tokenBody = new URLSearchParams({
@@ -292,8 +352,9 @@ export async function completeOidcCallback(params: {
   const verified = await verifyEntraIdToken({
     idToken: tokenPayload.id_token,
     expectedNonce: tx.nonce,
-    tenantId: effective.entraTenantId,
+    tenantId: authority,
     clientId: effective.oidcClientId,
+    multiTenant: isSaas,
   })
 
   return {

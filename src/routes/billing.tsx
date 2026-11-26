@@ -3,17 +3,28 @@ import { createFileRoute, redirect } from '@tanstack/react-router'
 import {
   CheckCircle2,
   CreditCard,
+  ExternalLink,
   KeyRound,
   RefreshCw,
   ShieldCheck,
+  Sparkles,
 } from 'lucide-react'
 import { useState } from 'react'
+import { z } from 'zod'
 import {
   applyLicenseKeyFn,
   getBillingStatusFn,
+  openStripePortalFn,
+  startSaasCheckoutFn,
 } from '~/server/functions/billing'
 
+const billingSearchSchema = z.object({
+  checkout: z.string().optional(),
+  welcome: z.string().optional(),
+})
+
 export const Route = createFileRoute('/billing')({
+  validateSearch: (search) => billingSearchSchema.parse(search),
   beforeLoad: ({ context, location }) => {
     if (!context.auth.user) {
       throw redirect({
@@ -30,14 +41,33 @@ export const Route = createFileRoute('/billing')({
 
 function BillingPage() {
   const { auth } = Route.useRouteContext()
-  const isAdmin = auth.user?.role === 'admin' || auth.user?.role === 'owner'
+  const search = Route.useSearch()
+  const isOwnerOrAdmin =
+    auth.user?.role === 'admin' || auth.user?.role === 'owner'
   const queryClient = useQueryClient()
 
   const [licenseKey, setLicenseKey] = useState('')
   const [banner, setBanner] = useState<{
     type: 'success' | 'error'
     text: string
-  } | null>(null)
+  } | null>(
+    search.checkout === 'success'
+      ? {
+          type: 'success',
+          text: 'Subscription checkout completed! Your Pocket365 Cloud SaaS entitlements will activate automatically within seconds.',
+        }
+      : search.checkout === 'canceled'
+        ? {
+            type: 'error',
+            text: 'Stripe checkout was canceled. You can restart your subscription any time below.',
+          }
+        : search.welcome === '1'
+          ? {
+              type: 'success',
+              text: 'Welcome to Pocket365 Cloud! Your isolated organization is ready — subscribe below to unlock all features and unlimited multi-tenant MSP management.',
+            }
+          : null,
+  )
 
   const query = useQuery({
     queryKey: ['billing-status'],
@@ -52,7 +82,7 @@ function BillingPage() {
         type: 'success',
         text: `Activated ${res.plan.tier.toUpperCase()} license for ${res.plan.licensee}.`,
       })
-      queryClient.invalidateQueries({ queryKey: ['billing-status'] })
+      void queryClient.invalidateQueries({ queryKey: ['billing-status'] })
     },
     onError: (err) => {
       setBanner({
@@ -65,7 +95,41 @@ function BillingPage() {
     },
   })
 
+  const checkoutMutation = useMutation({
+    mutationFn: () => startSaasCheckoutFn(),
+    onSuccess: (res) => {
+      window.location.href = res.url
+    },
+    onError: (err) => {
+      setBanner({
+        type: 'error',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Unable to start Stripe Checkout.',
+      })
+    },
+  })
+
+  const portalMutation = useMutation({
+    mutationFn: () => openStripePortalFn(),
+    onSuccess: (res) => {
+      window.location.href = res.url
+    },
+    onError: (err) => {
+      setBanner({
+        type: 'error',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Unable to open Stripe Billing Portal.',
+      })
+    },
+  })
+
   const plan = query.data?.plan
+  const isSaas = query.data?.deploymentMode === 'saas'
+  const org = query.data?.organization
 
   return (
     <div className="space-y-6">
@@ -75,8 +139,9 @@ function BillingPage() {
             Plan, Entitlements & Licensing
           </h1>
           <p className="text-sm text-slate-600">
-            Manage commercial tier entitlements via offline Ed25519-signed
-            license keys or Stripe subscription webhooks.
+            {isSaas
+              ? 'Manage your Pocket365 Cloud SaaS subscription and unlimited multi-tenant MSP access via Stripe.'
+              : 'Self-Hosted Cloudflare Workers deployment — activate Pro single-tenant features via offline Ed25519 license key.'}
           </p>
         </div>
         <button
@@ -110,6 +175,59 @@ function BillingPage() {
         </div>
       )}
 
+      {/* SaaS Subscription Checkout / Billing Portal Callout */}
+      {isSaas && isOwnerOrAdmin && (
+        <section className="bg-slate-900 text-white rounded-2xl border border-slate-800 p-6 flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-300 uppercase tracking-wider">
+              <Sparkles className="h-3.5 w-3.5" />
+              Pocket365 Cloud SaaS — Single Monthly Plan
+            </div>
+            <h2 className="text-lg font-bold">
+              {org?.name || 'Your Organization'}
+            </h2>
+            <p className="text-xs text-slate-300">
+              Includes all CIS 1-click fixes, BEC Sweeps, Alerts, Onboarding,
+              BitLocker, and unlimited zero-secret multi-tenant MSP onboarding
+              via Microsoft Admin Consent.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            {org?.hasStripeCustomer && (
+              <button
+                type="button"
+                disabled={portalMutation.isPending}
+                onClick={() => portalMutation.mutate()}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-xs font-semibold cursor-pointer"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                {portalMutation.isPending
+                  ? 'Opening Portal...'
+                  : 'Manage Billing & Invoices'}
+              </button>
+            )}
+            {plan?.tier !== 'enterprise' && (
+              <button
+                type="button"
+                disabled={
+                  checkoutMutation.isPending ||
+                  !query.data?.stripeCheckoutConfigured
+                }
+                onClick={() => checkoutMutation.mutate()}
+                className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer"
+              >
+                <CreditCard className="h-4 w-4" />
+                {checkoutMutation.isPending
+                  ? 'Redirecting to Stripe...'
+                  : query.data?.stripeCheckoutConfigured
+                    ? 'Subscribe with Stripe Checkout'
+                    : 'Configure STRIPE_SECRET_KEY & STRIPE_PRICE_SAAS'}
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+
       {plan && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
@@ -120,7 +238,7 @@ function BillingPage() {
               {plan.tier}
             </div>
             <div className="text-xs text-slate-500 mt-0.5">
-              Source: {plan.source} • Mode: {plan.enforcement}
+              Mode: {plan.deploymentMode} • Enforcement: {plan.enforcement}
             </div>
           </div>
           <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
@@ -149,10 +267,14 @@ function BillingPage() {
           </div>
           <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
             <div className="text-[11px] uppercase font-medium text-slate-500">
-              Stripe Webhook
+              Stripe Integration
             </div>
             <div className="mt-1 text-lg font-bold text-slate-900">
-              {query.data?.stripeConfigured ? 'Connected' : 'Ready (Unset)'}
+              {query.data?.stripeCheckoutConfigured
+                ? 'Checkout + Webhook'
+                : query.data?.stripeConfigured
+                  ? 'Webhook Ready'
+                  : 'Unconfigured'}
             </div>
             <div className="text-xs font-mono text-slate-500 mt-0.5">
               POST /api/billing/webhook
@@ -218,18 +340,18 @@ function BillingPage() {
         })}
       </div>
 
-      {/* Offline License Key Activation */}
-      {isAdmin && (
+      {/* Offline License Key Activation (Self-Hosted Cloudflare Workers) */}
+      {isOwnerOrAdmin && !isSaas && (
         <section className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
             <KeyRound className="h-4 w-4 text-indigo-600" />
-            Apply Offline Ed25519-Signed License Key
+            Apply Offline Ed25519-Signed Pro License Key
           </div>
           <p className="text-xs text-slate-600">
-            Self-hosted Docker/Portainer deployments can activate Pro or
-            Enterprise offline without external telemetry by configuring{' '}
-            <code className="font-mono">LICENSE_PUBLIC_KEY</code> and applying a
-            signed JWT license key below.
+            Self-hosted Cloudflare Workers deployments can unlock all
+            single-tenant Pro features offline without external telemetry by
+            setting the <code className="font-mono">LICENSE_PUBLIC_KEY</code>{' '}
+            Worker secret and pasting your signed JWT license key below.
           </p>
           <form
             className="space-y-3"
@@ -252,7 +374,7 @@ function BillingPage() {
                 Public verification key:{' '}
                 {query.data?.licensePublicKeyConfigured
                   ? 'Configured'
-                  : 'Not set (set LICENSE_PUBLIC_KEY env var)'}
+                  : 'Not set (set LICENSE_PUBLIC_KEY secret)'}
               </span>
               <button
                 type="submit"

@@ -59,7 +59,7 @@ function TenantsCommandCenterPage() {
   const [primaryDomain, setPrimaryDomain] = useState('')
   const [connectionMode, setConnectionMode] = useState<
     'admin_consent' | 'app_credentials'
-  >('app_credentials')
+  >('admin_consent')
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
   const [consentUrl, setConsentUrl] = useState<string | null>(null)

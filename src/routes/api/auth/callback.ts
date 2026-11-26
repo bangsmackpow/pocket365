@@ -7,14 +7,19 @@ import {
   createSession,
   OIDC_COOKIE_NAME,
 } from '~/server/auth/session'
-import { getConfigReadiness } from '~/server/config'
+import { getConfig, getConfigReadiness } from '~/server/config'
 import { recordAuditLog } from '~/server/db/audit'
+import type { UserRole } from '~/server/db/schema'
 import { getGraphClient } from '~/server/graph/client'
 import {
   buildCanonicalUrl,
   getClientIp,
   parseCookies,
 } from '~/server/http/proxy'
+import {
+  DEFAULT_ORG_ID,
+  findOrCreateOrgForEntraTenant,
+} from '~/server/orgs/service'
 import { getEffectiveEntraConfig } from '~/server/setup/service'
 
 function redirectWithClearOidc(path: string, request: Request): Response {
@@ -62,6 +67,7 @@ export const Route = createFileRoute('/api/auth/callback')({
         }
 
         try {
+          const cfg = getConfig()
           const identity = await completeOidcCallback({
             code,
             state,
@@ -69,51 +75,82 @@ export const Route = createFileRoute('/api/auth/callback')({
             request,
           })
 
-          // If Entra emitted a group overage claim or omitted groups, resolve via Graph when configured
+          let organizationId = DEFAULT_ORG_ID
+          let role: UserRole | null = null
           let groups = identity.groups
-          if (
-            (identity.hasGroupsOverage || groups.length === 0) &&
-            getConfigReadiness().graphConfigured
-          ) {
-            try {
-              const graph = await getGraphClient()
-              groups = await graph.getUserMemberGroupIds(identity.oid)
-            } catch {
-              // Proceed with token claims if Graph group lookup is unavailable
-            }
-          }
+          let redirectTarget = identity.returnTo
 
-          const effective = await getEffectiveEntraConfig()
-          let role = resolveUserRole({
-            oid: identity.oid,
-            preferredUsername: identity.preferredUsername,
-            upn: identity.upn,
-            email: identity.email,
-            groups,
-          })
+          if (cfg.deploymentMode === 'saas') {
+            // SaaS Mode: Auto-provision isolated organization keyed by user's home Entra tenant ID
+            const { org, created } = await findOrCreateOrgForEntraTenant({
+              homeEntraTenantId: identity.tenantId,
+              ownerUpn: identity.upn,
+            })
+            organizationId = org.id
 
-          // Merge D1 /setup wizard owner/admin lists when configured via browser wizard
-          if (!role && effective.source === 'd1_setup') {
-            const candidates = new Set(
-              [
-                identity.oid,
-                identity.preferredUsername,
-                identity.upn,
-                identity.email,
-                ...groups,
-              ]
-                .filter((v): v is string => Boolean(v))
-                .map((v) => v.toLowerCase()),
-            )
-            if (effective.ownerEntries.some((e) => candidates.has(e))) {
+            // Organization creator / owner gets 'owner'; other org members default to configured RBAC or 'admin'
+            if (org.ownerUpn.toLowerCase() === identity.upn.toLowerCase()) {
               role = 'owner'
-            } else if (effective.adminEntries.some((e) => candidates.has(e))) {
-              role = 'admin'
+            } else {
+              role =
+                resolveUserRole({
+                  oid: identity.oid,
+                  preferredUsername: identity.preferredUsername,
+                  upn: identity.upn,
+                  email: identity.email,
+                  groups,
+                }) ?? 'admin'
+            }
+
+            if (created && redirectTarget === '/') {
+              redirectTarget = '/billing?welcome=1'
+            }
+          } else {
+            // Self-Hosted Single-Tenant Mode: strict env + /setup wizard RBAC enforcement
+            if (
+              (identity.hasGroupsOverage || groups.length === 0) &&
+              getConfigReadiness().graphConfigured
+            ) {
+              try {
+                const graph = await getGraphClient()
+                groups = await graph.getUserMemberGroupIds(identity.oid)
+              } catch {
+                // Proceed with token claims if Graph group lookup is unavailable
+              }
+            }
+
+            const effective = await getEffectiveEntraConfig()
+            role = resolveUserRole({
+              oid: identity.oid,
+              preferredUsername: identity.preferredUsername,
+              upn: identity.upn,
+              email: identity.email,
+              groups,
+            })
+
+            if (!role && effective.source === 'd1_setup') {
+              const candidates = new Set(
+                [
+                  identity.oid,
+                  identity.preferredUsername,
+                  identity.upn,
+                  identity.email,
+                  ...groups,
+                ]
+                  .filter((v): v is string => Boolean(v))
+                  .map((v) => v.toLowerCase()),
+              )
+              if (effective.ownerEntries.some((e) => candidates.has(e))) {
+                role = 'owner'
+              } else if (effective.adminEntries.some((e) => candidates.has(e))) {
+                role = 'admin'
+              }
             }
           }
 
           if (!role) {
             await recordAuditLog({
+              organizationId,
               actorOid: identity.oid,
               actorUpn: identity.upn,
               actorRole: 'none',
@@ -131,6 +168,7 @@ export const Route = createFileRoute('/api/auth/callback')({
           }
 
           const { rawToken } = await createSession({
+            organizationId,
             userOid: identity.oid,
             userUpn: identity.upn,
             displayName: identity.displayName,
@@ -141,18 +179,24 @@ export const Route = createFileRoute('/api/auth/callback')({
           })
 
           await recordAuditLog({
+            organizationId,
             actorOid: identity.oid,
             actorUpn: identity.upn,
             actorRole: role,
             action: 'auth.login.success',
             target: 'pocket365',
             status: 'success',
-            details: { role, groupCount: groups.length },
+            details: {
+              role,
+              groupCount: groups.length,
+              deploymentMode: cfg.deploymentMode,
+              homeTenantId: identity.tenantId,
+            },
             ipAddress,
           })
 
           const headers = new Headers({
-            Location: buildCanonicalUrl(identity.returnTo, request),
+            Location: buildCanonicalUrl(redirectTarget, request),
             'Cache-Control': 'no-store',
           })
           headers.append('Set-Cookie', buildClearOidcCookieHeader(request))
