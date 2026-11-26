@@ -57,9 +57,23 @@ describe('Phase 3 Tier Entitlements, Ed25519 Licensing & Stripe Webhooks', () =>
       EntitlementHttpError,
     )
 
-    // Open mode allows everything cleanly
+    // Open self-hosted mode unlocks all single-tenant Pro features, but keeps multi-tenant SaaS-only
     process.env.LICENSE_ENFORCEMENT = 'off'
     resetConfigCache()
+    await expect(requireEntitlement('cis.autofix')).resolves.toBeTruthy()
+    await expect(requireEntitlement('tenants.multi_tenant')).rejects.toThrowError(
+      EntitlementHttpError,
+    )
+
+    // SaaS mode with active enterprise subscription unlocks multi-tenant MSP
+    process.env.DEPLOYMENT_MODE = 'saas'
+    resetConfigCache()
+    await persistLicenseState({
+      source: 'stripe',
+      tier: 'enterprise',
+      licensee: 'SaaS MSP Org',
+      updatedBy: 'stripe:webhook',
+    })
     await expect(requireEntitlement('tenants.multi_tenant')).resolves.toBeTruthy()
   })
 
@@ -99,9 +113,17 @@ describe('Phase 3 Tier Entitlements, Ed25519 Licensing & Stripe Webhooks', () =>
       expiresAt: verified.expiresAt,
       updatedBy: 'owner@msp.com',
     })
-    const plan = await getActivePlan()
-    expect(plan.tier).toBe('enterprise')
-    expect(plan.maxTenants).toBe(100)
+    // In self_hosted mode, tier is capped at Pro (single-tenant)
+    const selfHostedPlan = await getActivePlan()
+    expect(selfHostedPlan.tier).toBe('pro')
+    expect(selfHostedPlan.maxTenants).toBe(1)
+
+    // In saas mode, enterprise tier unlocks multi-tenant limits
+    process.env.DEPLOYMENT_MODE = 'saas'
+    resetConfigCache()
+    const saasPlan = await getActivePlan()
+    expect(saasPlan.tier).toBe('enterprise')
+    expect(saasPlan.maxTenants).toBe(100)
   })
 
   it('verifies Stripe HMAC-SHA256 webhook signatures and resolves price IDs', () => {

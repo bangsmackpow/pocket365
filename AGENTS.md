@@ -53,8 +53,8 @@ This file documents the architecture, conventions, security invariants, and veri
 ## 4. Phase Status
 - **Phases 1–4 (Complete):** Full M365 console, Security Hardening & 5-tier RBAC, Commercial Tiering/Ed25519/Stripe Webhooks, Multi-Tenant MSP Command Center.
 - **Phase CF-1 (Complete):** Full Cloudflare Workers migration (`cloudflare-module` + `wrangler.jsonc`), async Drizzle D1 database layer + Node 22 `node:sqlite` D1 Vitest harness, Cloudflare KV distributed rate limiting & encrypted Graph token caching, Cloudflare R2 compliance report archiving (`/api/exports/download`), DNS-over-HTTPS (`doh.ts`), Cloudflare Cron Triggers + Queues (`ctx.waitUntil` Free-tier fallback), Docker retirement, and Cloudflare CI/CD workflow.
-- **Phase CF-2 (Next):** `DEPLOYMENT_MODE=self_hosted|saas` enforcement and strict multi-org D1/KV/R2 isolation (`organizations` table).
-- **Phase CF-3 (Planned):** Self-hosted first-run `/setup` wizard, 1-click PowerShell Entra App bootstrap script, "Deploy to Cloudflare" flow, and key-versioned `enc:v2` encryption rotation.
+- **Phase CF-2 (Complete):** `DEPLOYMENT_MODE=self_hosted|saas` enforcement (single-tenant vs multi-tenant MSP gating), D1 migration `0005_organizations` (`organizations` table + `organization_id` across all domain tables), organization provisioning service (`src/server/orgs/service.ts`), strict org isolation across D1 queries, KV Graph token keys, and R2 export paths, and mode-aware `AppShell` navigation.
+- **Phase CF-3 (Next):** Self-hosted first-run `/setup` wizard, 1-click PowerShell Entra App bootstrap script, "Deploy to Cloudflare" flow, and key-versioned `enc:v2` encryption rotation.
 - **Phase CF-4 (Planned):** SaaS `/common` Microsoft Sign-In, Stripe Checkout + Billing Portal, and zero-secret multi-tenant Admin Consent onboarding.
 
 ---

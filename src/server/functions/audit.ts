@@ -15,9 +15,10 @@ const listAuditInputSchema = z.object({
 export const listAuditLogsFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => listAuditInputSchema.parse(input ?? {}))
   .handler(async ({ data }) => {
-    await requireSession()
+    const session = await requireSession()
     return {
       logs: await listAuditLogs({
+        organizationId: session.organizationId,
         limit: data.limit ?? 100,
         status: data.status ?? 'all',
         search: data.search,
@@ -33,9 +34,10 @@ const listJobsInputSchema = z.object({
 export const listJobsFn = createServerFn({ method: 'GET' })
   .validator((input: unknown) => listJobsInputSchema.parse(input ?? {}))
   .handler(async ({ data }) => {
-    await requireSession()
+    const session = await requireSession()
     return {
       jobs: await listJobs({
+        organizationId: session.organizationId,
         limit: data.limit ?? 50,
         status: data.status ?? 'all',
       }),

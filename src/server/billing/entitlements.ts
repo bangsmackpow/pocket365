@@ -1,10 +1,11 @@
 import { setResponseStatus } from '@tanstack/react-start/server'
 import { eq } from 'drizzle-orm'
 import { importPKCS8, importSPKI, jwtVerify, SignJWT } from 'jose'
-import { getConfig } from '~/server/config'
+import { getConfig, type DeploymentMode } from '~/server/config'
 import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
 import { licenseState, type PlanTier } from '~/server/db/schema'
+import { DEFAULT_ORG_ID } from '~/server/orgs/service'
 import { encryptSecret } from '~/server/security/crypto'
 
 export type EntitlementFeature =
@@ -73,7 +74,8 @@ export const TIER_CATALOG: Record<PlanTier, TierDefinition> = {
   community: {
     tier: 'community',
     name: 'Community / Self-Hosted Free',
-    tagline: 'Core single-tenant Entra ID & M365 operations on your Cloudflare account',
+    tagline:
+      'Core single-tenant Entra ID & M365 operations on your own Cloudflare account',
     maxTenants: 1,
     maxUsers: 50,
     maxWebhooks: 0,
@@ -82,8 +84,9 @@ export const TIER_CATALOG: Record<PlanTier, TierDefinition> = {
   },
   pro: {
     tier: 'pro',
-    name: 'Pro Single-Tenant',
-    tagline: 'Full single-tenant CIS hardening, BEC sweeps, alerts, onboarding & posture',
+    name: 'Pro Single-Tenant License',
+    tagline:
+      'All single-tenant features (CIS fixes, BEC sweeps, alerts, onboarding, BitLocker) on your Cloudflare account',
     maxTenants: 1,
     maxUsers: 2500,
     maxWebhooks: 10,
@@ -92,8 +95,9 @@ export const TIER_CATALOG: Record<PlanTier, TierDefinition> = {
   },
   enterprise: {
     tier: 'enterprise',
-    name: 'Pocket365 Cloud SaaS (MSP)',
-    tagline: 'All features + unlimited multi-tenant MSP command center & white-label',
+    name: 'Pocket365 Cloud SaaS (All Features + MSP)',
+    tagline:
+      'Single monthly subscription with all features + unlimited multi-tenant MSP command center',
     maxTenants: 500,
     maxUsers: 100000,
     maxWebhooks: 100,
@@ -107,9 +111,14 @@ export class EntitlementHttpError extends Error {
   public readonly requiredFeature: EntitlementFeature
   public readonly currentTier: PlanTier
 
-  constructor(feature: EntitlementFeature, currentTier: PlanTier) {
+  constructor(
+    feature: EntitlementFeature,
+    currentTier: PlanTier,
+    customMessage?: string,
+  ) {
     super(
-      `Feature "${feature}" requires a higher Pocket365 tier (current plan: ${currentTier}). Visit /billing to upgrade or apply a license key.`,
+      customMessage ||
+        `Feature "${feature}" requires a higher Pocket365 plan (current tier: ${currentTier}). Visit /billing to upgrade or apply a license key.`,
     )
     this.name = 'EntitlementHttpError'
     this.requiredFeature = feature
@@ -199,10 +208,13 @@ export async function verifySignedLicenseKey(
 }
 
 export interface ActivePlanInfo {
+  deploymentMode: DeploymentMode
+  organizationId: string
   tier: PlanTier
   source: 'env' | 'license_key' | 'stripe'
   enforcement: 'off' | 'strict'
   licensee: string
+  multiTenantEnabled: boolean
   maxTenants: number
   maxUsers: number
   maxWebhooks: number
@@ -212,45 +224,79 @@ export interface ActivePlanInfo {
   features: EntitlementFeature[]
 }
 
-export async function getActivePlan(): Promise<ActivePlanInfo> {
+function licenseRowId(organizationId: string): string {
+  return organizationId === DEFAULT_ORG_ID ? 'active' : `org:${organizationId}`
+}
+
+export async function getActivePlan(
+  organizationId = DEFAULT_ORG_ID,
+): Promise<ActivePlanInfo> {
   const cfg = getConfig()
   const db = getDb()
+  const rowId = licenseRowId(organizationId)
   const stored = await db
     .select()
     .from(licenseState)
-    .where(eq(licenseState.id, 'active'))
+    .where(eq(licenseState.id, rowId))
     .get()
 
-  const tier: PlanTier = stored?.tier ?? cfg.defaultTier
+  const rawTier: PlanTier =
+    stored?.tier ??
+    (cfg.deploymentMode === 'saas' ? 'community' : cfg.defaultTier)
+
   const now = Date.now()
   const expiresAt = stored?.expiresAt ?? null
   const expired = expiresAt !== null && expiresAt < now
   const pastGrace =
     expiresAt !== null && expiresAt + GRACE_PERIOD_SECONDS * 1000 < now
 
-  const effectiveTier: PlanTier =
-    cfg.licenseEnforcement === 'strict' && pastGrace ? 'community' : tier
+  let effectiveTier: PlanTier =
+    cfg.licenseEnforcement === 'strict' && pastGrace ? 'community' : rawTier
+
+  // Self-hosted deployments are strictly single-tenant (capped at Pro features)
+  if (cfg.deploymentMode === 'self_hosted' && effectiveTier === 'enterprise') {
+    effectiveTier = 'pro'
+  }
+
   const effectiveDef = TIER_CATALOG[effectiveTier]
+  const multiTenantEnabled =
+    cfg.deploymentMode === 'saas' && effectiveTier === 'enterprise'
+  const features = multiTenantEnabled
+    ? effectiveDef.features
+    : effectiveDef.features.filter((f) => f !== 'tenants.multi_tenant')
 
   return {
+    deploymentMode: cfg.deploymentMode,
+    organizationId,
     tier: effectiveTier,
     source: (stored?.source as ActivePlanInfo['source']) ?? 'env',
     enforcement: cfg.licenseEnforcement,
-    licensee: stored?.licensee ?? 'Self-Hosted Instance',
-    maxTenants: stored?.maxTenants ?? effectiveDef.maxTenants,
+    licensee:
+      stored?.licensee ??
+      (cfg.deploymentMode === 'saas'
+        ? 'Cloud SaaS Organization'
+        : 'Self-Hosted Instance'),
+    multiTenantEnabled,
+    maxTenants: multiTenantEnabled
+      ? (stored?.maxTenants ?? effectiveDef.maxTenants)
+      : 1,
     maxUsers: stored?.maxUsers ?? effectiveDef.maxUsers,
     maxWebhooks: effectiveDef.maxWebhooks,
     auditRetentionDays: effectiveDef.auditRetentionDays,
     expiresAt,
     inGracePeriod: Boolean(expired && !pastGrace),
-    features: effectiveDef.features,
+    features,
   }
 }
 
 export async function isFeatureEntitled(
   feature: EntitlementFeature,
+  organizationId = DEFAULT_ORG_ID,
 ): Promise<boolean> {
-  const plan = await getActivePlan()
+  const plan = await getActivePlan(organizationId)
+  if (feature === 'tenants.multi_tenant' && plan.deploymentMode !== 'saas') {
+    return false
+  }
   if (plan.enforcement === 'off') {
     return true
   }
@@ -258,15 +304,51 @@ export async function isFeatureEntitled(
 }
 
 /**
- * Server-side commercial tier entitlement check.
- * When LICENSE_ENFORCEMENT=strict, throws HTTP 402 Payment Required for locked features.
- * When LICENSE_ENFORCEMENT=off, allows all features cleanly.
+ * Server-side commercial tier & deployment mode entitlement check.
+ * - Multi-tenant MSP features (`tenants.multi_tenant`) are strictly gated to `DEPLOYMENT_MODE=saas`
+ *   with an active SaaS subscription.
+ * - When LICENSE_ENFORCEMENT=strict (or DEPLOYMENT_MODE=saas), throws HTTP 402 Payment Required.
  */
 export async function requireEntitlement(
   feature: EntitlementFeature,
-  actor?: { oid: string; upn: string; role: string },
+  actor?: {
+    oid: string
+    upn: string
+    role: string
+    organizationId?: string
+  },
 ): Promise<ActivePlanInfo> {
-  const plan = await getActivePlan()
+  const orgId = actor?.organizationId || DEFAULT_ORG_ID
+  const plan = await getActivePlan(orgId)
+
+  if (feature === 'tenants.multi_tenant' && plan.deploymentMode !== 'saas') {
+    try {
+      setResponseStatus(402)
+    } catch {
+      // Outside request context
+    }
+    if (actor) {
+      await recordAuditLog({
+        organizationId: orgId,
+        actorOid: actor.oid,
+        actorUpn: actor.upn,
+        actorRole: actor.role,
+        action: `entitlement.denied:${feature}`,
+        target: 'self_hosted_mode',
+        status: 'failure',
+        details: {
+          requiredFeature: feature,
+          deploymentMode: plan.deploymentMode,
+        },
+      })
+    }
+    throw new EntitlementHttpError(
+      feature,
+      plan.tier,
+      'Multi-tenant MSP management is exclusive to Pocket365 Cloud SaaS (DEPLOYMENT_MODE=saas). Self-hosted deployments are single-tenant.',
+    )
+  }
+
   if (plan.enforcement === 'off' || plan.features.includes(feature)) {
     return plan
   }
@@ -279,6 +361,7 @@ export async function requireEntitlement(
 
   if (actor) {
     await recordAuditLog({
+      organizationId: orgId,
       actorOid: actor.oid,
       actorUpn: actor.upn,
       actorRole: actor.role,
@@ -293,6 +376,7 @@ export async function requireEntitlement(
 }
 
 export async function persistLicenseState(params: {
+  organizationId?: string
   source: 'env' | 'license_key' | 'stripe'
   tier: PlanTier
   licensee: string
@@ -305,10 +389,12 @@ export async function persistLicenseState(params: {
   updatedBy: string
 }): Promise<void> {
   const db = getDb()
+  const orgId = params.organizationId?.trim() || DEFAULT_ORG_ID
   const def = TIER_CATALOG[params.tier]
   const now = Date.now()
   const row = {
-    id: 'active',
+    id: licenseRowId(orgId),
+    organizationId: orgId,
     source: params.source,
     tier: params.tier,
     licensee: params.licensee,

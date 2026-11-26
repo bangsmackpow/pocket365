@@ -5,6 +5,7 @@ import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
 import { jobs, type JobRow, type JobStatus, type UserRole } from '~/server/db/schema'
 import { getRuntimeSettings } from '~/server/db/settings'
+import { DEFAULT_ORG_ID } from '~/server/orgs/service'
 import { getGraphClient, type MicrosoftGraphClient } from './client'
 import {
   analyzeInboxRuleRisk,
@@ -139,6 +140,7 @@ async function dispatchJobExecution(jobId: string): Promise<void> {
 }
 
 export async function enqueueJob(params: {
+  organizationId?: string
   type: JobType
   payload: JobPayload
   actor: JobActor
@@ -148,8 +150,10 @@ export async function enqueueJob(params: {
 }): Promise<JobRow> {
   const db = getDb()
   const now = Date.now()
+  const organizationId = params.organizationId?.trim() || DEFAULT_ORG_ID
   const row: JobRow = {
     id: crypto.randomUUID(),
+    organizationId,
     type: params.type,
     status: 'queued',
     payloadJson: JSON.stringify(params.payload),
@@ -169,6 +173,7 @@ export async function enqueueJob(params: {
   await db.insert(jobs).values(row).run()
 
   await recordAuditLog({
+    organizationId,
     actorOid: params.actor.oid,
     actorUpn: params.actor.upn,
     actorRole: params.actor.role,
@@ -187,22 +192,25 @@ export async function enqueueJob(params: {
 }
 
 export async function listJobs(options: {
+  organizationId?: string
   limit?: number
   status?: JobStatus | 'all'
 } = {}): Promise<JobRow[]> {
   const db = getDb()
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
-  return db
+  const orgId = options.organizationId?.trim() || DEFAULT_ORG_ID
+  const rows = await db
     .select()
     .from(jobs)
-    .where(
-      options.status && options.status !== 'all'
-        ? eq(jobs.status, options.status)
-        : undefined,
-    )
+    .where(eq(jobs.organizationId, orgId))
     .orderBy(desc(jobs.createdAt))
     .limit(limit)
     .all()
+
+  if (options.status && options.status !== 'all') {
+    return rows.filter((r) => r.status === options.status)
+  }
+  return rows
 }
 
 export async function getJobById(jobId: string): Promise<JobRow | null> {

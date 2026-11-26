@@ -1,9 +1,11 @@
 import crypto from 'node:crypto'
 import { and, desc, eq, like, or } from 'drizzle-orm'
+import { DEFAULT_ORG_ID } from '~/server/orgs/service'
 import { getDb } from './index'
 import { auditLogs, type AuditLogRow, type AuditStatus } from './schema'
 
 export interface RecordAuditInput {
+  organizationId?: string
   actorOid: string
   actorUpn: string
   actorRole: string
@@ -20,6 +22,7 @@ export async function recordAuditLog(
   const db = getDb()
   const row: AuditLogRow = {
     id: crypto.randomUUID(),
+    organizationId: input.organizationId?.trim() || DEFAULT_ORG_ID,
     actorOid: input.actorOid,
     actorUpn: input.actorUpn,
     actorRole: input.actorRole,
@@ -36,6 +39,7 @@ export async function recordAuditLog(
 }
 
 export interface ListAuditLogsOptions {
+  organizationId?: string
   limit?: number
   action?: string
   status?: AuditStatus | 'all'
@@ -47,7 +51,8 @@ export async function listAuditLogs(
 ): Promise<AuditLogRow[]> {
   const db = getDb()
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 500)
-  const conditions = []
+  const orgId = options.organizationId?.trim() || DEFAULT_ORG_ID
+  const conditions = [eq(auditLogs.organizationId, orgId)]
 
   if (options.action && options.action !== 'all') {
     conditions.push(eq(auditLogs.action, options.action))
@@ -63,14 +68,14 @@ export async function listAuditLogs(
         like(auditLogs.target, pattern),
         like(auditLogs.action, pattern),
         like(auditLogs.detailsJson, pattern),
-      ),
+      )!,
     )
   }
 
   return db
     .select()
     .from(auditLogs)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .where(and(...conditions))
     .orderBy(desc(auditLogs.createdAt))
     .limit(limit)
     .all()

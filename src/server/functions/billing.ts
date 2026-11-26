@@ -14,14 +14,17 @@ import { getClientIp } from '~/server/http/proxy'
 
 export const getBillingStatusFn = createServerFn({ method: 'GET' }).handler(
   async () => {
-    await requireSession()
+    const session = await requireSession()
     const cfg = getConfig()
-    const plan = await getActivePlan()
+    const plan = await getActivePlan(session.organizationId)
 
     return {
       plan,
       catalog: Object.values(TIER_CATALOG),
       stripeConfigured: Boolean(cfg.stripeWebhookSecret),
+      stripeCheckoutConfigured: Boolean(
+        cfg.stripeSecretKey && cfg.stripePriceSaas,
+      ),
       licensePublicKeyConfigured: Boolean(cfg.licensePublicKeyPem),
     }
   },
@@ -42,6 +45,7 @@ export const applyLicenseKeyFn = createServerFn({ method: 'POST' })
     )
 
     await persistLicenseState({
+      organizationId: session.organizationId,
       source: 'license_key',
       tier: claims.tier,
       licensee: claims.licensee,
@@ -53,6 +57,7 @@ export const applyLicenseKeyFn = createServerFn({ method: 'POST' })
     })
 
     await recordAuditLog({
+      organizationId: session.organizationId,
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -68,5 +73,5 @@ export const applyLicenseKeyFn = createServerFn({ method: 'POST' })
       ipAddress: getClientIp(getRequest()),
     })
 
-    return { ok: true, plan: await getActivePlan() }
+    return { ok: true, plan: await getActivePlan(session.organizationId) }
   })

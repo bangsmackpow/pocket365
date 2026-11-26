@@ -43,6 +43,7 @@ export interface TenantSwitcherOption {
 
 interface AppShellProps {
   user: ClientSessionUser
+  deploymentMode?: 'self_hosted' | 'saas'
   tenantIdHint: string | null
   activeTenantId?: string | null
   accessibleTenants?: TenantSwitcherOption[]
@@ -79,6 +80,7 @@ function formatRoleLabel(role: UserRole): string {
 
 export function AppShell({
   user,
+  deploymentMode = 'self_hosted',
   tenantIdHint,
   activeTenantId,
   accessibleTenants = [],
@@ -88,6 +90,10 @@ export function AppShell({
   const router = useRouter()
   const queryClient = useQueryClient()
   const isAdmin = user.role === 'admin' || user.role === 'owner'
+  const isSaas = deploymentMode === 'saas'
+  const visibleNavItems = isSaas
+    ? NAV_ITEMS
+    : NAV_ITEMS.filter((item) => item.to !== '/tenants')
 
   const switchTenantMutation = useMutation({
     mutationFn: (managedTenantId: string) =>
@@ -112,13 +118,13 @@ export function AppShell({
                 Pocket365
               </div>
               <div className="text-xs text-slate-400">
-                M365 Security & MSP Console
+                {isSaas ? 'Cloud MSP Console' : 'Self-Hosted M365 Console'}
               </div>
             </div>
           </Link>
 
-          {/* Global Multi-Tenant Switcher */}
-          {accessibleTenants.length > 0 && (
+          {/* Global Multi-Tenant Switcher (SaaS mode) */}
+          {isSaas && accessibleTenants.length > 0 && (
             <div className="space-y-1">
               <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1">
                 <Building2 className="h-3 w-3" />
@@ -142,7 +148,7 @@ export function AppShell({
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-1">
-          {NAV_ITEMS.map(({ to, label, icon: Icon }) => {
+          {visibleNavItems.map(({ to, label, icon: Icon }) => {
             const active =
               to === '/' ? pathname === '/' : pathname.startsWith(to)
             return (

@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { guardApiRole } from '~/server/auth/guards'
 import { getExportObject } from '~/server/cf/r2'
+import { isExportKeyOwnedByOrg } from '~/server/orgs/service'
 
 export const Route = createFileRoute('/api/exports/download')({
   server: {
@@ -11,10 +12,14 @@ export const Route = createFileRoute('/api/exports/download')({
 
         const url = new URL(request.url)
         const key = (url.searchParams.get('key') || '').trim()
-        if (!key || key.includes('..') || !key.startsWith('exports/')) {
+        if (!key || !isExportKeyOwnedByOrg(key, auth.session.organizationId)) {
           return Response.json(
-            { error: 'INVALID_KEY', message: 'Invalid export object key.' },
-            { status: 400 },
+            {
+              error: 'FORBIDDEN',
+              message:
+                'Export artifact does not belong to your organization or key is invalid.',
+            },
+            { status: 403 },
           )
         }
 

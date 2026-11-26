@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireRole, requireSession } from '~/server/auth/guards'
 import { requireEntitlement } from '~/server/billing/entitlements'
@@ -82,7 +82,7 @@ export interface SerializableCaPolicy {
 export const getConditionalAccessDataFn = createServerFn({
   method: 'GET',
 }).handler(async () => {
-  await requireSession()
+  const session = await requireSession()
   const db = getDb()
   const graph = await getGraphClient()
 
@@ -96,14 +96,24 @@ export const getConditionalAccessDataFn = createServerFn({
         createdAt: policySnapshots.createdAt,
       })
       .from(policySnapshots)
-      .where(eq(policySnapshots.snapshotType, 'conditional_access'))
+      .where(
+        and(
+          eq(policySnapshots.organizationId, session.organizationId),
+          eq(policySnapshots.snapshotType, 'conditional_access'),
+        ),
+      )
       .orderBy(desc(policySnapshots.createdAt))
       .limit(20)
       .all(),
     db
       .select()
       .from(policySnapshots)
-      .where(eq(policySnapshots.snapshotType, 'conditional_access'))
+      .where(
+        and(
+          eq(policySnapshots.organizationId, session.organizationId),
+          eq(policySnapshots.snapshotType, 'conditional_access'),
+        ),
+      )
       .orderBy(desc(policySnapshots.createdAt))
       .limit(1)
       .get(),
@@ -168,6 +178,7 @@ export const createCaSnapshotFn = createServerFn({ method: 'POST' })
       .insert(policySnapshots)
       .values({
         id,
+        organizationId: session.organizationId,
         snapshotType: 'conditional_access',
         label: data.label.trim(),
         actorUpn: session.upn,

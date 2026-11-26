@@ -8,11 +8,43 @@ export type UserRole =
   | 'viewer'
 export type AuditStatus = 'success' | 'failure' | 'queued'
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed'
+export type PlanTier = 'community' | 'pro' | 'enterprise'
+export type SubscriptionStatus =
+  | 'active'
+  | 'trialing'
+  | 'past_due'
+  | 'canceled'
+  | 'inactive'
+
+export const organizations = sqliteTable(
+  'organizations',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    slug: text('slug').notNull().unique(),
+    homeEntraTenantId: text('home_entra_tenant_id'),
+    ownerUpn: text('owner_upn').notNull(),
+    planTier: text('plan_tier').$type<PlanTier>().notNull().default('community'),
+    stripeCustomerId: text('stripe_customer_id'),
+    stripeSubscriptionId: text('stripe_subscription_id'),
+    subscriptionStatus: text('subscription_status')
+      .$type<SubscriptionStatus>()
+      .notNull()
+      .default('inactive'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    index('idx_organizations_home_tenant').on(table.homeEntraTenantId),
+    index('idx_organizations_stripe_customer').on(table.stripeCustomerId),
+  ],
+)
 
 export const sessions = sqliteTable(
   'sessions',
   {
     id: text('id').primaryKey(), // SHA-256 hash of raw session token
+    organizationId: text('organization_id').notNull().default('default'),
     userOid: text('user_oid').notNull(),
     userUpn: text('user_upn').notNull(),
     displayName: text('display_name').notNull(),
@@ -28,6 +60,7 @@ export const sessions = sqliteTable(
   (table) => [
     index('idx_sessions_expires_at').on(table.expiresAt),
     index('idx_sessions_user_oid').on(table.userOid),
+    index('idx_sessions_org').on(table.organizationId),
   ],
 )
 
@@ -49,6 +82,7 @@ export const auditLogs = sqliteTable(
   'audit_logs',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().default('default'),
     actorOid: text('actor_oid').notNull(),
     actorUpn: text('actor_upn').notNull(),
     actorRole: text('actor_role').notNull(),
@@ -63,6 +97,7 @@ export const auditLogs = sqliteTable(
     index('idx_audit_logs_created_at').on(table.createdAt),
     index('idx_audit_logs_action').on(table.action),
     index('idx_audit_logs_actor_oid').on(table.actorOid),
+    index('idx_audit_logs_org').on(table.organizationId, table.createdAt),
   ],
 )
 
@@ -70,6 +105,7 @@ export const jobs = sqliteTable(
   'jobs',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().default('default'),
     type: text('type').notNull(),
     status: text('status').$type<JobStatus>().notNull(),
     payloadJson: text('payload_json').notNull().default('{}'),
@@ -88,6 +124,7 @@ export const jobs = sqliteTable(
   (table) => [
     index('idx_jobs_status_created_at').on(table.status, table.createdAt),
     index('idx_jobs_created_at').on(table.createdAt),
+    index('idx_jobs_org').on(table.organizationId, table.createdAt),
   ],
 )
 
@@ -102,6 +139,7 @@ export const policySnapshots = sqliteTable(
   'policy_snapshots',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().default('default'),
     snapshotType: text('snapshot_type').notNull(),
     label: text('label').notNull(),
     actorUpn: text('actor_upn').notNull(),
@@ -114,6 +152,11 @@ export const policySnapshots = sqliteTable(
       table.snapshotType,
       table.createdAt,
     ),
+    index('idx_policy_snapshots_org').on(
+      table.organizationId,
+      table.snapshotType,
+      table.createdAt,
+    ),
   ],
 )
 
@@ -121,6 +164,7 @@ export const cisSnapshots = sqliteTable(
   'cis_snapshots',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().default('default'),
     actorUpn: text('actor_upn').notNull(),
     scorePct: integer('score_pct').notNull(),
     passed: integer('passed').notNull(),
@@ -130,26 +174,35 @@ export const cisSnapshots = sqliteTable(
     checksJson: text('checks_json').notNull(),
     createdAt: integer('created_at').notNull(),
   },
-  (table) => [index('idx_cis_snapshots_created').on(table.createdAt)],
+  (table) => [
+    index('idx_cis_snapshots_created').on(table.createdAt),
+    index('idx_cis_snapshots_org').on(table.organizationId, table.createdAt),
+  ],
 )
 
 export type WebhookProvider = 'teams' | 'slack' | 'discord' | 'generic'
 
-export const alertWebhooks = sqliteTable('alert_webhooks', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  provider: text('provider').$type<WebhookProvider>().notNull(),
-  url: text('url').notNull(),
-  enabled: integer('enabled').notNull().default(1),
-  createdBy: text('created_by').notNull(),
-  createdAt: integer('created_at').notNull(),
-  updatedAt: integer('updated_at').notNull(),
-})
+export const alertWebhooks = sqliteTable(
+  'alert_webhooks',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().default('default'),
+    name: text('name').notNull(),
+    provider: text('provider').$type<WebhookProvider>().notNull(),
+    url: text('url').notNull(),
+    enabled: integer('enabled').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [index('idx_alert_webhooks_org').on(table.organizationId)],
+)
 
 export const alertEvents = sqliteTable(
   'alert_events',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().default('default'),
     ruleKey: text('rule_key').notNull(),
     dedupeKey: text('dedupe_key').notNull(),
     severity: text('severity').notNull(),
@@ -162,41 +215,50 @@ export const alertEvents = sqliteTable(
   (table) => [
     index('idx_alert_events_created').on(table.createdAt),
     index('idx_alert_events_dedupe').on(table.dedupeKey, table.createdAt),
+    index('idx_alert_events_org').on(table.organizationId, table.createdAt),
   ],
 )
 
-export const onboardingTemplates = sqliteTable('onboarding_templates', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  description: text('description').notNull().default(''),
-  department: text('department').notNull().default(''),
-  jobTitle: text('job_title').notNull().default(''),
-  officeLocation: text('office_location').notNull().default(''),
-  usageLocation: text('usage_location').notNull().default('US'),
-  skuIdsJson: text('sku_ids_json').notNull().default('[]'),
-  groupIdsJson: text('group_ids_json').notNull().default('[]'),
-  issueTap: integer('issue_tap').notNull().default(0),
-  forcePasswordChange: integer('force_password_change').notNull().default(1),
-  createdBy: text('created_by').notNull(),
-  updatedAt: integer('updated_at').notNull(),
-})
+export const onboardingTemplates = sqliteTable(
+  'onboarding_templates',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().default('default'),
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    department: text('department').notNull().default(''),
+    jobTitle: text('job_title').notNull().default(''),
+    officeLocation: text('office_location').notNull().default(''),
+    usageLocation: text('usage_location').notNull().default('US'),
+    skuIdsJson: text('sku_ids_json').notNull().default('[]'),
+    groupIdsJson: text('group_ids_json').notNull().default('[]'),
+    issueTap: integer('issue_tap').notNull().default(0),
+    forcePasswordChange: integer('force_password_change').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [index('idx_onboarding_templates_org').on(table.organizationId)],
+)
 
-export type PlanTier = 'community' | 'pro' | 'enterprise'
-
-export const licenseState = sqliteTable('license_state', {
-  id: text('id').primaryKey(),
-  source: text('source').notNull(), // 'env' | 'license_key' | 'stripe'
-  tier: text('tier').$type<PlanTier>().notNull(),
-  licensee: text('licensee').notNull().default('Self-Hosted'),
-  licenseKeyEnc: text('license_key_enc'),
-  stripeCustomerId: text('stripe_customer_id'),
-  stripeSubscriptionId: text('stripe_subscription_id'),
-  maxTenants: integer('max_tenants').notNull().default(1),
-  maxUsers: integer('max_users').notNull().default(50),
-  expiresAt: integer('expires_at'),
-  updatedBy: text('updated_by').notNull(),
-  updatedAt: integer('updated_at').notNull(),
-})
+export const licenseState = sqliteTable(
+  'license_state',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().default('default'),
+    source: text('source').notNull(), // 'env' | 'license_key' | 'stripe'
+    tier: text('tier').$type<PlanTier>().notNull(),
+    licensee: text('licensee').notNull().default('Self-Hosted'),
+    licenseKeyEnc: text('license_key_enc'),
+    stripeCustomerId: text('stripe_customer_id'),
+    stripeSubscriptionId: text('stripe_subscription_id'),
+    maxTenants: integer('max_tenants').notNull().default(1),
+    maxUsers: integer('max_users').notNull().default(50),
+    expiresAt: integer('expires_at'),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [index('idx_license_state_org').on(table.organizationId)],
+)
 
 export type TenantConnectionMode =
   | 'env_primary'
@@ -209,6 +271,7 @@ export const managedTenants = sqliteTable(
   'managed_tenants',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().default('default'),
     entraTenantId: text('entra_tenant_id').notNull().unique(),
     displayName: text('display_name').notNull(),
     primaryDomain: text('primary_domain').notNull().default(''),
@@ -229,21 +292,32 @@ export const managedTenants = sqliteTable(
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },
-  (table) => [index('idx_managed_tenants_entra_id').on(table.entraTenantId)],
+  (table) => [
+    index('idx_managed_tenants_entra_id').on(table.entraTenantId),
+    index('idx_managed_tenants_org').on(
+      table.organizationId,
+      table.entraTenantId,
+    ),
+  ],
 )
 
 export const tenantAccess = sqliteTable(
   'tenant_access',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().default('default'),
     principal: text('principal').notNull(), // lowercase UPN or OID
     managedTenantId: text('managed_tenant_id').notNull(),
     createdBy: text('created_by').notNull(),
     createdAt: integer('created_at').notNull(),
   },
-  (table) => [index('idx_tenant_access_principal').on(table.principal)],
+  (table) => [
+    index('idx_tenant_access_principal').on(table.principal),
+    index('idx_tenant_access_org').on(table.organizationId, table.principal),
+  ],
 )
 
+export type OrganizationRow = typeof organizations.$inferSelect
 export type SessionRow = typeof sessions.$inferSelect
 export type AuditLogRow = typeof auditLogs.$inferSelect
 export type JobRow = typeof jobs.$inferSelect

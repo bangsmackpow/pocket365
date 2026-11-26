@@ -50,6 +50,7 @@ export async function createClientAssertionJwt(params: {
 }
 
 export interface TenantGraphCredentials {
+  organizationId?: string
   entraTenantId: string
   clientId: string
   clientSecret?: string
@@ -86,7 +87,8 @@ export class GraphTokenProvider {
   }
 
   private getKvCacheKey(creds: TenantGraphCredentials): string {
-    return `graph:tok:${creds.entraTenantId}:${creds.clientId}`
+    const orgScope = creds.organizationId || 'default'
+    return `graph:tok:${orgScope}:${creds.entraTenantId}:${creds.clientId}`
   }
 
   public invalidate(): void {

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   recordAndDispatchAlert,
@@ -36,11 +36,13 @@ export const getAlertsDashboardFn = createServerFn({ method: 'GET' }).handler(
       db
         .select()
         .from(alertWebhooks)
+        .where(eq(alertWebhooks.organizationId, session.organizationId))
         .orderBy(desc(alertWebhooks.createdAt))
         .all(),
       db
         .select()
         .from(alertEvents)
+        .where(eq(alertEvents.organizationId, session.organizationId))
         .orderBy(desc(alertEvents.createdAt))
         .limit(100)
         .all(),
@@ -88,6 +90,7 @@ export const addAlertWebhookFn = createServerFn({ method: 'POST' })
       .insert(alertWebhooks)
       .values({
         id,
+        organizationId: session.organizationId,
         name: data.name.trim(),
         provider: data.provider,
         url: encryptSecret(data.url.trim()),
@@ -125,7 +128,12 @@ export const toggleAlertWebhookFn = createServerFn({ method: 'POST' })
     await db
       .update(alertWebhooks)
       .set({ enabled: data.enabled ? 1 : 0, updatedAt: Date.now() })
-      .where(eq(alertWebhooks.id, data.id))
+      .where(
+        and(
+          eq(alertWebhooks.id, data.id),
+          eq(alertWebhooks.organizationId, session.organizationId),
+        ),
+      )
       .run()
 
     await recordAuditLog({
@@ -151,7 +159,15 @@ export const deleteAlertWebhookFn = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const session = await requireRole('admin', undefined, 'alerts.delete_webhook')
     const db = getDb()
-    await db.delete(alertWebhooks).where(eq(alertWebhooks.id, data.id)).run()
+    await db
+      .delete(alertWebhooks)
+      .where(
+        and(
+          eq(alertWebhooks.id, data.id),
+          eq(alertWebhooks.organizationId, session.organizationId),
+        ),
+      )
+      .run()
 
     await recordAuditLog({
       actorOid: session.oid,

@@ -1543,7 +1543,11 @@ export class MicrosoftGraphClient {
 let defaultClient: MicrosoftGraphClient | null = null
 const tenantClients = new Map<string, MicrosoftGraphClient>()
 
-export function evictTenantGraphClient(managedTenantId: string): void {
+export function evictTenantGraphClient(
+  managedTenantId: string,
+  organizationId = 'default',
+): void {
+  tenantClients.delete(`${organizationId}:${managedTenantId}`)
   tenantClients.delete(managedTenantId)
 }
 
@@ -1553,36 +1557,43 @@ export function clearAllTenantGraphClients(): void {
 }
 
 /**
- * Returns an isolated MicrosoftGraphClient scoped to either:
- * 1) an explicit `managedTenantId`, OR
+ * Returns an isolated MicrosoftGraphClient scoped to:
+ * 1) an explicit `managedTenantId` (within the caller's organization), OR
  * 2) the authenticated session's currently selected tenant (Multi-Tenant Switcher), OR
  * 3) the default primary single-tenant env configuration.
  */
 export async function getGraphClient(
   explicitManagedTenantId?: string,
+  explicitOrgId?: string,
 ): Promise<MicrosoftGraphClient> {
+  let session = null
+  try {
+    session = await getCurrentSession()
+  } catch {
+    session = null
+  }
+
+  const orgId = explicitOrgId || session?.organizationId || 'default'
   let tenantRow = explicitManagedTenantId
-    ? await getManagedTenantById(explicitManagedTenantId)
+    ? await getManagedTenantById(explicitManagedTenantId, orgId)
     : null
 
-  if (!tenantRow) {
+  if (!tenantRow && session) {
     try {
-      const session = await getCurrentSession()
-      if (session?.activeTenantId) {
-        tenantRow = await resolveActiveTenantForSession(session)
-      }
+      tenantRow = await resolveActiveTenantForSession(session)
     } catch {
       tenantRow = null
     }
   }
 
   if (tenantRow && tenantRow.connectionMode !== 'env_primary') {
-    const cached = tenantClients.get(tenantRow.id)
+    const cacheKey = `${tenantRow.organizationId || orgId}:${tenantRow.id}`
+    const cached = tenantClients.get(cacheKey)
     if (cached) return cached
     const creds = resolveTenantGraphCredentials(tenantRow)
     const provider = new GraphTokenProvider(fetch, creds)
     const client = new MicrosoftGraphClient({ tokenProvider: provider })
-    tenantClients.set(tenantRow.id, client)
+    tenantClients.set(cacheKey, client)
     return client
   }
 

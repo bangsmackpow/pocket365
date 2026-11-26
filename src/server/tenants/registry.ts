@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import { isAdminRole } from '~/server/auth/roles'
 import type { SessionUser } from '~/server/auth/session'
 import { getConfig } from '~/server/config'
@@ -14,21 +14,33 @@ import {
 } from '~/server/db/schema'
 import type { TenantGraphCredentials } from '~/server/graph/auth'
 import { buildCanonicalUrl } from '~/server/http/proxy'
+import { DEFAULT_ORG_ID } from '~/server/orgs/service'
 import { decryptSecret, encryptSecret } from '~/server/security/crypto'
 
 /**
- * Ensures the primary tenant configured via ENTRA_TENANT_ID is seeded into
- * `managed_tenants` so single-tenant deployments work seamlessly.
+ * In `self_hosted` mode, ensures the primary tenant configured via ENTRA_TENANT_ID
+ * is seeded into `managed_tenants` under the default organization.
+ * In `saas` mode, organizations connect their own M365 tenants via Admin Consent.
  */
-export async function ensurePrimaryTenantSeeded(): Promise<ManagedTenantRow | null> {
+export async function ensurePrimaryTenantSeeded(
+  organizationId = DEFAULT_ORG_ID,
+): Promise<ManagedTenantRow | null> {
   const cfg = getConfig()
+  if (cfg.deploymentMode === 'saas' || organizationId !== DEFAULT_ORG_ID) {
+    return null
+  }
   if (!cfg.entraTenantId) return null
 
   const db = getDb()
   const existing = await db
     .select()
     .from(managedTenants)
-    .where(eq(managedTenants.entraTenantId, cfg.entraTenantId))
+    .where(
+      and(
+        eq(managedTenants.organizationId, DEFAULT_ORG_ID),
+        eq(managedTenants.entraTenantId, cfg.entraTenantId),
+      ),
+    )
     .get()
 
   if (existing) {
@@ -38,6 +50,7 @@ export async function ensurePrimaryTenantSeeded(): Promise<ManagedTenantRow | nu
   const now = Date.now()
   const row: ManagedTenantRow = {
     id: crypto.randomUUID(),
+    organizationId: DEFAULT_ORG_ID,
     entraTenantId: cfg.entraTenantId,
     displayName: 'Primary Tenant',
     primaryDomain: '',
@@ -61,39 +74,46 @@ export async function ensurePrimaryTenantSeeded(): Promise<ManagedTenantRow | nu
   return row
 }
 
-export async function listAllManagedTenants(): Promise<ManagedTenantRow[]> {
-  await ensurePrimaryTenantSeeded()
+export async function listAllManagedTenants(
+  organizationId = DEFAULT_ORG_ID,
+): Promise<ManagedTenantRow[]> {
+  await ensurePrimaryTenantSeeded(organizationId)
   const db = getDb()
   return db
     .select()
     .from(managedTenants)
+    .where(eq(managedTenants.organizationId, organizationId))
     .orderBy(asc(managedTenants.createdAt))
     .all()
 }
 
 export async function getManagedTenantById(
   id: string,
+  organizationId?: string,
 ): Promise<ManagedTenantRow | null> {
-  await ensurePrimaryTenantSeeded()
+  await ensurePrimaryTenantSeeded(organizationId ?? DEFAULT_ORG_ID)
   const db = getDb()
+  const whereClause = organizationId
+    ? and(
+        eq(managedTenants.id, id),
+        eq(managedTenants.organizationId, organizationId),
+      )
+    : eq(managedTenants.id, id)
+
   return (
-    (await db
-      .select()
-      .from(managedTenants)
-      .where(eq(managedTenants.id, id))
-      .get()) ?? null
+    (await db.select().from(managedTenants).where(whereClause).get()) ?? null
   )
 }
 
 /**
- * Returns managed tenants accessible to the signed-in user.
- * Owners/Admins can access all managed tenants. Other roles are scoped to
- * `tenant_access` if any explicit grants exist for them, otherwise primary tenant.
+ * Returns managed tenants accessible to the signed-in user strictly within
+ * their own `organizationId`.
  */
 export async function listAccessibleTenants(
   session: SessionUser,
 ): Promise<ManagedTenantRow[]> {
-  const all = await listAllManagedTenants()
+  const orgId = session.organizationId || DEFAULT_ORG_ID
+  const all = await listAllManagedTenants(orgId)
   if (isAdminRole(session.role)) {
     return all
   }
@@ -103,7 +123,12 @@ export async function listAccessibleTenants(
   const grants = await db
     .select()
     .from(tenantAccess)
-    .where(inArray(tenantAccess.principal, principals))
+    .where(
+      and(
+        eq(tenantAccess.organizationId, orgId),
+        inArray(tenantAccess.principal, principals),
+      ),
+    )
     .all()
 
   if (grants.length === 0) {
@@ -125,9 +150,10 @@ export async function canAccessTenant(
 export async function resolveActiveTenantForSession(
   session: SessionUser | null,
 ): Promise<ManagedTenantRow | null> {
-  await ensurePrimaryTenantSeeded()
+  const orgId = session?.organizationId || DEFAULT_ORG_ID
+  await ensurePrimaryTenantSeeded(orgId)
   if (!session) {
-    const all = await listAllManagedTenants()
+    const all = await listAllManagedTenants(DEFAULT_ORG_ID)
     return all.find((t) => t.isPrimary === 1) ?? all[0] ?? null
   }
 
@@ -143,7 +169,8 @@ export async function setSessionActiveTenant(
   session: SessionUser,
   managedTenantId: string,
 ): Promise<ManagedTenantRow> {
-  const target = await getManagedTenantById(managedTenantId)
+  const orgId = session.organizationId || DEFAULT_ORG_ID
+  const target = await getManagedTenantById(managedTenantId, orgId)
   if (!target) {
     throw new Error('Managed tenant not found.')
   }
@@ -155,7 +182,12 @@ export async function setSessionActiveTenant(
   await db
     .update(sessions)
     .set({ activeTenantId: target.id })
-    .where(eq(sessions.id, session.sessionId))
+    .where(
+      and(
+        eq(sessions.id, session.sessionId),
+        eq(sessions.organizationId, orgId),
+      ),
+    )
     .run()
 
   return target
@@ -163,15 +195,17 @@ export async function setSessionActiveTenant(
 
 /**
  * Resolves isolated Microsoft Graph app-only credentials for a specific managed tenant.
- * Never leaks secrets across tenant boundaries.
+ * Never leaks secrets across tenant or organization boundaries.
  */
 export function resolveTenantGraphCredentials(
   tenant: ManagedTenantRow,
 ): TenantGraphCredentials {
   const cfg = getConfig()
+  const organizationId = tenant.organizationId || DEFAULT_ORG_ID
 
   if (tenant.connectionMode === 'env_primary') {
     return {
+      organizationId,
       entraTenantId: tenant.entraTenantId,
       clientId: cfg.graphClientId,
       clientSecret: cfg.graphClientSecret || undefined,
@@ -181,8 +215,9 @@ export function resolveTenantGraphCredentials(
   }
 
   if (tenant.connectionMode === 'admin_consent') {
-    // Uses Pocket365's multi-tenant Graph app credentials against the customer's tenant ID
+    // Zero per-customer secrets: uses Pocket365's multi-tenant Graph app cert/secret
     return {
+      organizationId,
       entraTenantId: tenant.entraTenantId,
       clientId: tenant.clientId || cfg.graphClientId,
       clientSecret: cfg.graphClientSecret || undefined,
@@ -193,6 +228,7 @@ export function resolveTenantGraphCredentials(
 
   // Dedicated per-tenant app credentials encrypted at rest in D1
   return {
+    organizationId,
     entraTenantId: tenant.entraTenantId,
     clientId: tenant.clientId,
     clientSecret: tenant.clientSecretEnc
@@ -206,6 +242,7 @@ export function resolveTenantGraphCredentials(
 }
 
 export async function createManagedTenantRecord(params: {
+  organizationId?: string
   entraTenantId: string
   displayName: string
   primaryDomain?: string
@@ -214,6 +251,7 @@ export async function createManagedTenantRecord(params: {
   clientSecret?: string
   certThumbprint?: string
   certPrivateKey?: string
+  isPrimary?: boolean
   createdBy: string
 }): Promise<ManagedTenantRow> {
   const db = getDb()
@@ -221,6 +259,7 @@ export async function createManagedTenantRecord(params: {
   const id = crypto.randomUUID()
   const row: ManagedTenantRow = {
     id,
+    organizationId: params.organizationId?.trim() || DEFAULT_ORG_ID,
     entraTenantId: params.entraTenantId.trim(),
     displayName: params.displayName.trim(),
     primaryDomain: (params.primaryDomain || '').trim(),
@@ -233,7 +272,7 @@ export async function createManagedTenantRecord(params: {
     certPrivateKeyEnc: params.certPrivateKey
       ? encryptSecret(params.certPrivateKey.trim())
       : null,
-    isPrimary: 0,
+    isPrimary: params.isPrimary ? 1 : 0,
     status: 'active',
     lastHealthCheckAt: null,
     lastHealthError: null,
@@ -251,10 +290,13 @@ export async function createManagedTenantRecord(params: {
 export async function createAdminConsentRequestUrl(
   actorUpn: string,
   request?: Request,
+  organizationId = DEFAULT_ORG_ID,
 ): Promise<{ consentUrl: string; state: string }> {
   const cfg = getConfig()
   if (!cfg.graphClientId) {
-    throw new Error('GRAPH_CLIENT_ID must be configured for Admin Consent onboarding.')
+    throw new Error(
+      'GRAPH_CLIENT_ID must be configured for Admin Consent onboarding.',
+    )
   }
 
   const db = getDb()
@@ -264,9 +306,9 @@ export async function createAdminConsentRequestUrl(
     .insert(oidcStates)
     .values({
       state,
-      nonce: actorUpn,
+      nonce: `${organizationId}|${actorUpn}`,
       codeVerifier: 'admin_consent',
-      cookieBindingHash: 'admin_consent',
+      cookieBindingHash: organizationId,
       returnTo: '/tenants',
       expiresAt: now + 60 * 60 * 1000, // 1 hour for customer admin to click link
       createdAt: now,

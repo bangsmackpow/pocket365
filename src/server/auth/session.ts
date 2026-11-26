@@ -8,6 +8,7 @@ import {
   parseCookies,
   serializeCookie,
 } from '~/server/http/proxy'
+import { DEFAULT_ORG_ID } from '~/server/orgs/service'
 
 export const SESSION_COOKIE_NAME = 'pocket365_session'
 export const OIDC_COOKIE_NAME = 'pocket365_oidc'
@@ -15,6 +16,7 @@ const LAST_SEEN_UPDATE_INTERVAL_MS = 5 * 60 * 1000
 
 export interface SessionUser {
   sessionId: string
+  organizationId: string
   oid: string
   upn: string
   displayName: string
@@ -36,6 +38,7 @@ export function hashSessionToken(rawToken: string): string {
 }
 
 export async function createSession(params: {
+  organizationId?: string
   userOid: string
   userUpn: string
   displayName: string
@@ -48,6 +51,7 @@ export async function createSession(params: {
   const db = getDb()
   const now = Date.now()
   const expiresAt = now + cfg.sessionTtlHours * 60 * 60 * 1000
+  const organizationId = params.organizationId?.trim() || DEFAULT_ORG_ID
 
   // Opportunistic cleanup of expired sessions
   await db.delete(sessions).where(lt(sessions.expiresAt, now)).run()
@@ -59,6 +63,7 @@ export async function createSession(params: {
     .insert(sessions)
     .values({
       id,
+      organizationId,
       userOid: params.userOid,
       userUpn: params.userUpn,
       displayName: params.displayName,
@@ -76,6 +81,7 @@ export async function createSession(params: {
     rawToken,
     session: {
       sessionId: id,
+      organizationId,
       oid: params.userOid,
       upn: params.userUpn,
       displayName: params.displayName,
@@ -124,6 +130,7 @@ export async function getSessionByRawToken(
 
   return {
     sessionId: row.id,
+    organizationId: row.organizationId || DEFAULT_ORG_ID,
     oid: row.userOid,
     upn: row.userUpn,
     displayName: row.displayName,
@@ -157,10 +164,18 @@ export async function destroySessionFromRequest(
   return session
 }
 
-export async function listActiveSessions(onlyUserOid?: string) {
+export async function listActiveSessions(
+  organizationId = DEFAULT_ORG_ID,
+  onlyUserOid?: string,
+) {
   const db = getDb()
   const now = Date.now()
   await db.delete(sessions).where(lt(sessions.expiresAt, now)).run()
+
+  const conditions = [eq(sessions.organizationId, organizationId)]
+  if (onlyUserOid) {
+    conditions.push(eq(sessions.userOid, onlyUserOid))
+  }
 
   return db
     .select({
@@ -176,25 +191,43 @@ export async function listActiveSessions(onlyUserOid?: string) {
       expiresAt: sessions.expiresAt,
     })
     .from(sessions)
-    .where(onlyUserOid ? eq(sessions.userOid, onlyUserOid) : undefined)
+    .where(and(...conditions))
     .orderBy(desc(sessions.lastSeenAt))
     .limit(100)
     .all()
 }
 
-export async function revokeSessionById(sessionId: string): Promise<void> {
+export async function revokeSessionById(
+  sessionId: string,
+  organizationId = DEFAULT_ORG_ID,
+): Promise<void> {
   const db = getDb()
-  await db.delete(sessions).where(eq(sessions.id, sessionId)).run()
+  await db
+    .delete(sessions)
+    .where(
+      and(
+        eq(sessions.id, sessionId),
+        eq(sessions.organizationId, organizationId),
+      ),
+    )
+    .run()
 }
 
 export async function revokeOtherUserSessions(
   userOid: string,
   keepSessionId: string,
+  organizationId = DEFAULT_ORG_ID,
 ): Promise<number> {
   const db = getDb()
   const res = await db
     .delete(sessions)
-    .where(and(eq(sessions.userOid, userOid), ne(sessions.id, keepSessionId)))
+    .where(
+      and(
+        eq(sessions.organizationId, organizationId),
+        eq(sessions.userOid, userOid),
+        ne(sessions.id, keepSessionId),
+      ),
+    )
     .run()
   return res.meta?.changes ?? 0
 }

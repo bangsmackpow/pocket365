@@ -78,9 +78,16 @@ export const Route = createFileRoute('/api/tenants/consent-callback')({
         }
 
         try {
+          const orgId = auth.session.organizationId
+          if (tx.cookieBindingHash && tx.cookieBindingHash !== orgId) {
+            throw new Error(
+              'Admin consent state does not match your active organization.',
+            )
+          }
+
           await requireEntitlement('tenants.multi_tenant', auth.session)
-          const plan = await getActivePlan()
-          const existingList = await listAllManagedTenants()
+          const plan = await getActivePlan(orgId)
+          const existingList = await listAllManagedTenants(orgId)
           const already = existingList.find(
             (t) =>
               t.entraTenantId.toLowerCase() === entraTenantId.toLowerCase(),
@@ -97,6 +104,7 @@ export const Route = createFileRoute('/api/tenants/consent-callback')({
               )
             }
             record = await createManagedTenantRecord({
+              organizationId: orgId,
               entraTenantId,
               displayName: `Tenant ${entraTenantId.slice(0, 8)}`,
               connectionMode: 'admin_consent',
@@ -106,7 +114,7 @@ export const Route = createFileRoute('/api/tenants/consent-callback')({
 
           // Probe Microsoft Graph /organization to auto-populate tenant display name & primary domain
           try {
-            const client = await getGraphClient(record.id)
+            const client = await getGraphClient(record.id, orgId)
             const org = await client.getOrganization()
             if (org) {
               const primaryDomain =

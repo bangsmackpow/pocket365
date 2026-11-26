@@ -18,6 +18,7 @@ export const getSecurityCenterDataFn = createServerFn({ method: 'GET' }).handler
     const cfg = getConfig()
     const isAdmin = isAdminRole(session.role)
     const activeSessions = await listActiveSessions(
+      session.organizationId,
       isAdmin ? undefined : session.oid,
     )
 
@@ -50,8 +51,9 @@ export const revokeSessionFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => revokeSessionSchema.parse(input))
   .handler(async ({ data }) => {
     const session = await requireRole('admin', undefined, 'session.revoke')
-    await revokeSessionById(data.sessionId)
+    await revokeSessionById(data.sessionId, session.organizationId)
     await recordAuditLog({
+      organizationId: session.organizationId,
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,
@@ -67,8 +69,13 @@ export const revokeSessionFn = createServerFn({ method: 'POST' })
 export const revokeMyOtherSessionsFn = createServerFn({ method: 'POST' }).handler(
   async () => {
     const session = await requireSession()
-    const count = await revokeOtherUserSessions(session.oid, session.sessionId)
+    const count = await revokeOtherUserSessions(
+      session.oid,
+      session.sessionId,
+      session.organizationId,
+    )
     await recordAuditLog({
+      organizationId: session.organizationId,
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,

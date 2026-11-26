@@ -46,6 +46,7 @@ function RootDocument() {
           {auth.user && !isLoginRoute ? (
             <AppShell
               user={auth.user}
+              deploymentMode={auth.deploymentMode}
               tenantIdHint={auth.tenantIdHint}
               activeTenantId={auth.activeTenantId}
               accessibleTenants={auth.accessibleTenants}

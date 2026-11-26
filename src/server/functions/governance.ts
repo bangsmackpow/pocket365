@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
-import { desc } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireRole, requireSession } from '~/server/auth/guards'
 import { requireEntitlement } from '~/server/billing/entitlements'
@@ -9,6 +9,7 @@ import { putExportObject } from '~/server/cf/r2'
 import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
 import { cisSnapshots } from '~/server/db/schema'
+import { buildOrgExportKey } from '~/server/orgs/service'
 import {
   GUEST_ROLE_IDS,
   type CisRemediationId,
@@ -31,7 +32,7 @@ async function waitMs(ms: number): Promise<void> {
 
 export const runCisBenchmarkScanFn = createServerFn({ method: 'GET' }).handler(
   async () => {
-    await requireSession()
+    const session = await requireSession()
     const scan = await collectCisScan()
     const db = getDb()
     const history = await db
@@ -46,6 +47,7 @@ export const runCisBenchmarkScanFn = createServerFn({ method: 'GET' }).handler(
         createdAt: cisSnapshots.createdAt,
       })
       .from(cisSnapshots)
+      .where(eq(cisSnapshots.organizationId, session.organizationId))
       .orderBy(desc(cisSnapshots.createdAt))
       .limit(15)
       .all()
@@ -69,6 +71,7 @@ export const saveCisSnapshotFn = createServerFn({ method: 'POST' }).handler(
       .insert(cisSnapshots)
       .values({
         id,
+        organizationId: session.organizationId,
         actorUpn: session.upn,
         scorePct: scan.summary.scorePct,
         passed: scan.summary.passed,
@@ -80,13 +83,18 @@ export const saveCisSnapshotFn = createServerFn({ method: 'POST' }).handler(
       })
       .run()
 
-    // Archive compliance report JSON to Cloudflare R2 (or memory fallback)
-    const r2Key = `exports/cis/cis-report-${id}.json`
+    // Archive organization-scoped compliance report JSON to Cloudflare R2
+    const r2Key = buildOrgExportKey(
+      session.organizationId,
+      'cis',
+      `cis-report-${id}.json`,
+    )
     await putExportObject({
       key: r2Key,
       body: JSON.stringify(
         {
           id,
+          organizationId: session.organizationId,
           createdAt: new Date(createdAt).toISOString(),
           actorUpn: session.upn,
           summary: scan.summary,
@@ -97,12 +105,14 @@ export const saveCisSnapshotFn = createServerFn({ method: 'POST' }).handler(
       ),
       contentType: 'application/json',
       customMetadata: {
+        organizationId: session.organizationId,
         actorUpn: session.upn,
         scorePct: String(scan.summary.scorePct),
       },
     })
 
     await recordAuditLog({
+      organizationId: session.organizationId,
       actorOid: session.oid,
       actorUpn: session.upn,
       actorRole: session.role,

@@ -15,6 +15,7 @@ import type { CisCheckResult } from '~/server/graph/cis-benchmarks'
 import { getGraphClient, type MicrosoftGraphClient } from '~/server/graph/client'
 import { analyzeAppCredentials } from '~/server/graph/insights-helpers'
 import { collectCisScan } from '~/server/graph/cis-scanner'
+import { DEFAULT_ORG_ID } from '~/server/orgs/service'
 import { decryptSecret } from '~/server/security/crypto'
 import { assertSafeWebhookUrl } from '~/server/security/ssrf'
 
@@ -131,12 +132,14 @@ export async function deliverAlertToWebhooks(
 export async function recordAndDispatchAlert(
   alert: OutgoingAlert,
   options: {
+    organizationId?: string
     skipDedupe?: boolean
     fetchImpl?: typeof fetch
   } = {},
 ): Promise<{ skipped: boolean; event?: AlertEventRow }> {
   const db = getDb()
   const now = Date.now()
+  const organizationId = options.organizationId?.trim() || DEFAULT_ORG_ID
 
   if (!options.skipDedupe) {
     const recent = await db
@@ -144,6 +147,7 @@ export async function recordAndDispatchAlert(
       .from(alertEvents)
       .where(
         and(
+          eq(alertEvents.organizationId, organizationId),
           eq(alertEvents.dedupeKey, alert.dedupeKey),
           gte(alertEvents.createdAt, now - DEDUPE_WINDOW_MS),
         ),
@@ -155,7 +159,11 @@ export async function recordAndDispatchAlert(
     }
   }
 
-  const webhooks = await db.select().from(alertWebhooks).all()
+  const webhooks = await db
+    .select()
+    .from(alertWebhooks)
+    .where(eq(alertWebhooks.organizationId, organizationId))
+    .all()
   const result = await deliverAlertToWebhooks(
     alert,
     webhooks,
@@ -173,6 +181,7 @@ export async function recordAndDispatchAlert(
 
   const event: AlertEventRow = {
     id: crypto.randomUUID(),
+    organizationId,
     ruleKey: alert.ruleKey,
     dedupeKey: alert.dedupeKey,
     severity: alert.severity,

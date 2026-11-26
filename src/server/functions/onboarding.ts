@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireRole, requireSession } from '~/server/auth/guards'
 import { requireEntitlement } from '~/server/billing/entitlements'
@@ -41,13 +41,14 @@ function parseJsonStringArray(raw: string): string[] {
 
 export const getOnboardingDataFn = createServerFn({ method: 'GET' }).handler(
   async () => {
-    await requireSession()
+    const session = await requireSession()
     const db = getDb()
     const graph = await getGraphClient()
 
     const rawTemplates = await db
       .select()
       .from(onboardingTemplates)
+      .where(eq(onboardingTemplates.organizationId, session.organizationId))
       .orderBy(desc(onboardingTemplates.updatedAt))
       .all()
 
@@ -108,6 +109,7 @@ export const saveOnboardingTemplateFn = createServerFn({ method: 'POST' })
       .insert(onboardingTemplates)
       .values({
         id,
+        organizationId: session.organizationId,
         name: data.name.trim(),
         description: data.description.trim(),
         department: data.department.trim(),
@@ -168,7 +170,12 @@ export const deleteOnboardingTemplateFn = createServerFn({ method: 'POST' })
     const db = getDb()
     await db
       .delete(onboardingTemplates)
-      .where(eq(onboardingTemplates.id, data.id))
+      .where(
+        and(
+          eq(onboardingTemplates.id, data.id),
+          eq(onboardingTemplates.organizationId, session.organizationId),
+        ),
+      )
       .run()
 
     await recordAuditLog({

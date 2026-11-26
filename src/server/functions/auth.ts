@@ -25,6 +25,7 @@ export const getSessionFn = createServerFn({ method: 'GET' }).handler(async () =
     : null
 
   return {
+    deploymentMode: cfg.deploymentMode,
     user: session
       ? {
           oid: session.oid,
@@ -32,10 +33,12 @@ export const getSessionFn = createServerFn({ method: 'GET' }).handler(async () =
           displayName: session.displayName,
           role: session.role,
           expiresAt: session.expiresAt,
+          organizationId: session.organizationId,
         }
       : null,
     activeTenantId: activeTenant?.id ?? null,
-    accessibleTenants,
+    accessibleTenants:
+      cfg.deploymentMode === 'saas' ? accessibleTenants : [],
     tenantIdHint: activeTenant
       ? `${activeTenant.entraTenantId.slice(0, 8)}...`
       : cfg.entraTenantId
