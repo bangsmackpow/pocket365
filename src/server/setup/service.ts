@@ -266,61 +266,95 @@ export function generatePowerShellBootstrapScript(appBaseUrl: string): string {
   const permList = POCKET365_GRAPH_PERMISSIONS.map((p) => `'${p.permission}'`).join(', ')
 
   return `# Pocket365 1-Click Entra ID App Bootstrap Script
-# Requires: Install-Module Microsoft.Graph -Scope CurrentUser
-# Run as Global Administrator or Application Administrator
+# Run in PowerShell (Windows PowerShell 5.1+, PowerShell 7+, or Azure Cloud Shell)
+# Sign in as Global Administrator or Application Administrator when prompted
 
-$ErrorActionPreference = "Stop"
-Connect-MgGraph -Scopes "Application.ReadWrite.All","AppRoleAssignment.ReadWrite.All","Directory.Read.All"
+& {
+  $ErrorActionPreference = "Stop"
 
-$ctx = Get-MgContext
-$tenantId = $ctx.TenantId
-$redirectUri = "${redirectUri}"
+  # 0. Ensure lightweight Microsoft Graph modules are installed (skip full 40-module suite)
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  $requiredModules = @("Microsoft.Graph.Authentication", "Microsoft.Graph.Applications")
+  $missingModules = $requiredModules | Where-Object { -not (Get-Module -ListAvailable -Name $_) }
 
-# 1. Create Single-Tenant Entra App Registration
-$app = New-MgApplication -DisplayName "Pocket365 Self-Hosted" \`
-  -SignInAudience "AzureADMyOrg" \`
-  -Web @{ RedirectUris = @($redirectUri) } \`
-  -GroupMembershipClaims "SecurityGroup"
-
-$sp = New-MgServicePrincipal -AppId $app.AppId
-
-# 2. Resolve & Assign Microsoft Graph Application Permissions
-$graphSp = Get-MgServicePrincipal -Filter "appId eq '00000003-0000-0000-c000-000000000000'"
-$desiredPermissions = @(${permList})
-$resourceAccess = @()
-
-foreach ($permName in $desiredPermissions) {
-  $role = $graphSp.AppRoles | Where-Object { $_.Value -eq $permName -and $_.AllowedMemberTypes -contains "Application" } | Select-Object -First 1
-  if ($role) {
-    $resourceAccess += @{ Id = $role.Id; Type = "Role" }
-    New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $sp.Id \`
-      -PrincipalId $sp.Id -ResourceId $graphSp.Id -AppRoleId $role.Id | Out-Null
+  if ($missingModules) {
+    Write-Host "Installing required PowerShell modules: $($missingModules -join ', ')..." -ForegroundColor Cyan
+    if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
+      Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force | Out-Null
+    }
+    foreach ($mod in $missingModules) {
+      Install-Module -Name $mod -Scope CurrentUser -Force -AllowClobber -Repository PSGallery
+    }
   }
+
+  Import-Module Microsoft.Graph.Authentication, Microsoft.Graph.Applications
+
+  Write-Host "Signing in to Microsoft Graph..." -ForegroundColor Cyan
+  Connect-MgGraph -Scopes "Application.ReadWrite.All","AppRoleAssignment.ReadWrite.All","Directory.Read.All"
+
+  $ctx = Get-MgContext
+  if (-not $ctx -or -not $ctx.TenantId) {
+    throw "Microsoft Graph sign-in did not complete. Please run the script again and complete the browser prompt."
+  }
+
+  $tenantId = $ctx.TenantId
+  $redirectUri = "${redirectUri}"
+
+  # 1. Create Single-Tenant Entra App Registration
+  Write-Host "Creating Entra ID App Registration (Pocket365 Self-Hosted)..." -ForegroundColor Cyan
+  $app = New-MgApplication -DisplayName "Pocket365 Self-Hosted" \`
+    -SignInAudience "AzureADMyOrg" \`
+    -Web @{ RedirectUris = @($redirectUri) } \`
+    -GroupMembershipClaims "SecurityGroup"
+
+  $sp = New-MgServicePrincipal -AppId $app.AppId
+  Write-Host "Waiting 5 seconds for Entra ID service principal replication..." -ForegroundColor Cyan
+  Start-Sleep -Seconds 5
+
+  # 2. Resolve & Assign Microsoft Graph Application Permissions (Grants Admin Consent)
+  Write-Host "Granting Microsoft Graph permissions..." -ForegroundColor Cyan
+  $graphSp = Get-MgServicePrincipal -Filter "appId eq '00000003-0000-0000-c000-000000000000'"
+  $desiredPermissions = @(${permList})
+  $resourceAccess = @()
+
+  foreach ($permName in $desiredPermissions) {
+    $role = $graphSp.AppRoles | Where-Object { $_.Value -eq $permName -and $_.AllowedMemberTypes -contains "Application" } | Select-Object -First 1
+    if ($role) {
+      $resourceAccess += @{ Id = $role.Id; Type = "Role" }
+      try {
+        New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $sp.Id \`
+          -PrincipalId $sp.Id -ResourceId $graphSp.Id -AppRoleId $role.Id | Out-Null
+      } catch {
+        Write-Warning "Could not assign $($permName): $($_.Exception.Message)"
+      }
+    }
+  }
+
+  Update-MgApplication -ApplicationId $app.Id -RequiredResourceAccess @(
+    @{ ResourceAppId = "00000003-0000-0000-c000-000000000000"; ResourceAccess = $resourceAccess }
+  )
+
+  # 3. Create 24-Month Client Secret
+  Write-Host "Creating 24-month client secret..." -ForegroundColor Cyan
+  $secret = Add-MgApplicationPassword -ApplicationId $app.Id -PasswordCredential @{
+    DisplayName = "Pocket365-Worker-Secret"
+    EndDateTime = (Get-Date).AddYears(2)
+  }
+
+  # 4. Output Setup JSON (Paste directly into Pocket365 /setup)
+  $setupBlob = [ordered]@{
+    entraTenantId     = $tenantId
+    oidcClientId      = $app.AppId
+    oidcClientSecret  = $secret.SecretText
+    graphClientId     = $app.AppId
+    graphClientSecret = $secret.SecretText
+    ownerUpn          = $ctx.Account
+  } | ConvertTo-Json -Compress
+
+  Write-Host ""
+  Write-Host "=== COPY THIS JSON INTO POCKET365 /setup ===" -ForegroundColor Green
+  Write-Host $setupBlob
+  Write-Host "============================================" -ForegroundColor Green
 }
-
-Update-MgApplication -ApplicationId $app.Id -RequiredResourceAccess @(
-  @{ ResourceAppId = "00000003-0000-0000-c000-000000000000"; ResourceAccess = $resourceAccess }
-)
-
-# 3. Create 24-Month Client Secret
-$secret = Add-MgApplicationPassword -ApplicationId $app.Id -PasswordCredential @{
-  DisplayName = "Pocket365-Worker-Secret"
-  EndDateTime = (Get-Date).AddYears(2)
-}
-
-# 4. Output Setup JSON (Paste directly into Pocket365 /setup)
-$setupBlob = @{
-  entraTenantId    = $tenantId
-  oidcClientId     = $app.AppId
-  oidcClientSecret = $secret.SecretText
-  graphClientId    = $app.AppId
-  graphClientSecret = $secret.SecretText
-  ownerUpn         = $ctx.Account
-} | ConvertTo-Json -Compress
-
-Write-Host ""
-Write-Host "=== COPY THIS JSON INTO POCKET365 /setup ===" -ForegroundColor Green
-Write-Host $setupBlob
-Write-Host "============================================" -ForegroundColor Green
 `
 }

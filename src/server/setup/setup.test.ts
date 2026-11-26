@@ -96,6 +96,9 @@ describe('Phase CF-3 Self-Hosted /setup Wizard & Key-Versioned enc:v2 Rotation',
     const script = generatePowerShellBootstrapScript(
       'https://m365.contoso.workers.dev/',
     )
+    expect(script).toContain('& {')
+    expect(script).toContain('Microsoft.Graph.Authentication')
+    expect(script).toContain('Microsoft.Graph.Applications')
     expect(script).toContain('Connect-MgGraph')
     expect(script).toContain('https://m365.contoso.workers.dev/api/auth/callback')
     expect(script).toContain('User.ReadWrite.All')
