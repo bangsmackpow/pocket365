@@ -1,5 +1,15 @@
+import { getCurrentSession } from '~/server/auth/guards'
 import { getConfig } from '~/server/config'
-import { getGraphTokenProvider, type GraphTokenProvider } from './auth'
+import {
+  getManagedTenantById,
+  resolveActiveTenantForSession,
+  resolveTenantGraphCredentials,
+} from '~/server/tenants/registry'
+import {
+  getGraphTokenProvider,
+  GraphTokenProvider,
+  type GraphTokenProvider as GraphTokenProviderType,
+} from './auth'
 
 const GRAPH_BASE_URL = 'https://graph.microsoft.com/v1.0'
 const RETRYABLE_STATUSES = new Set([429, 502, 503, 504])
@@ -521,7 +531,7 @@ function escapeGraphSearch(value: string): string {
 }
 
 export interface GraphClientDependencies {
-  tokenProvider?: GraphTokenProvider
+  tokenProvider?: GraphTokenProviderType
   fetchImpl?: typeof fetch
   sleepImpl?: (ms: number) => Promise<void>
   maxRetries?: number
@@ -1531,8 +1541,49 @@ export class MicrosoftGraphClient {
 }
 
 let defaultClient: MicrosoftGraphClient | null = null
+const tenantClients = new Map<string, MicrosoftGraphClient>()
 
-export function getGraphClient(): MicrosoftGraphClient {
+export function evictTenantGraphClient(managedTenantId: string): void {
+  tenantClients.delete(managedTenantId)
+}
+
+export function clearAllTenantGraphClients(): void {
+  tenantClients.clear()
+  defaultClient = null
+}
+
+/**
+ * Returns an isolated MicrosoftGraphClient scoped to either:
+ * 1) an explicit `managedTenantId`, OR
+ * 2) the authenticated session's currently selected tenant (Multi-Tenant Switcher), OR
+ * 3) the default primary single-tenant env configuration.
+ */
+export function getGraphClient(explicitManagedTenantId?: string): MicrosoftGraphClient {
+  let tenantRow = explicitManagedTenantId
+    ? getManagedTenantById(explicitManagedTenantId)
+    : null
+
+  if (!tenantRow) {
+    try {
+      const session = getCurrentSession()
+      if (session?.activeTenantId) {
+        tenantRow = resolveActiveTenantForSession(session)
+      }
+    } catch {
+      tenantRow = null
+    }
+  }
+
+  if (tenantRow && tenantRow.connectionMode !== 'env_primary') {
+    const cached = tenantClients.get(tenantRow.id)
+    if (cached) return cached
+    const creds = resolveTenantGraphCredentials(tenantRow)
+    const provider = new GraphTokenProvider(fetch, creds)
+    const client = new MicrosoftGraphClient({ tokenProvider: provider })
+    tenantClients.set(tenantRow.id, client)
+    return client
+  }
+
   if (!defaultClient) {
     defaultClient = new MicrosoftGraphClient()
   }

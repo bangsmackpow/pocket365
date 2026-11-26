@@ -1,8 +1,10 @@
-import { Link, useRouterState } from '@tanstack/react-router'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Link, useRouter, useRouterState } from '@tanstack/react-router'
 import {
   Activity,
   AppWindow,
   Bell,
+  Building2,
   ClipboardCheck,
   CreditCard,
   Crown,
@@ -22,6 +24,7 @@ import {
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { UserRole } from '~/server/db/schema'
+import { switchActiveTenantFn } from '~/server/functions/tenants'
 
 export interface ClientSessionUser {
   oid: string
@@ -31,14 +34,24 @@ export interface ClientSessionUser {
   expiresAt: number
 }
 
+export interface TenantSwitcherOption {
+  id: string
+  displayName: string
+  primaryDomain: string
+  isPrimary: boolean
+}
+
 interface AppShellProps {
   user: ClientSessionUser
   tenantIdHint: string | null
+  activeTenantId?: string | null
+  accessibleTenants?: TenantSwitcherOption[]
   children: ReactNode
 }
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/tenants', label: 'Tenants (MSP)', icon: Building2 },
   { to: '/signins', label: 'Sign-in Logs', icon: KeyRound },
   { to: '/mfa', label: 'MFA Coverage', icon: ShieldAlert },
   { to: '/cis', label: 'CIS Benchmarks', icon: ClipboardCheck },
@@ -64,15 +77,32 @@ function formatRoleLabel(role: UserRole): string {
   return 'read-only'
 }
 
-export function AppShell({ user, tenantIdHint, children }: AppShellProps) {
+export function AppShell({
+  user,
+  tenantIdHint,
+  activeTenantId,
+  accessibleTenants = [],
+  children,
+}: AppShellProps) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const router = useRouter()
+  const queryClient = useQueryClient()
   const isAdmin = user.role === 'admin' || user.role === 'owner'
+
+  const switchTenantMutation = useMutation({
+    mutationFn: (managedTenantId: string) =>
+      switchActiveTenantFn({ data: { managedTenantId } }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries()
+      await router.invalidate()
+    },
+  })
 
   return (
     <div className="min-h-screen flex bg-slate-50 text-slate-900">
       {/* Sidebar */}
       <aside className="w-64 shrink-0 bg-slate-950 text-slate-100 flex flex-col border-r border-slate-800">
-        <div className="px-5 py-5 border-b border-slate-800">
+        <div className="px-5 py-5 border-b border-slate-800 space-y-3">
           <Link to="/" className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-lg bg-indigo-600 flex items-center justify-center shadow-sm">
               <ShieldCheck className="h-5 w-5 text-white" />
@@ -82,10 +112,33 @@ export function AppShell({ user, tenantIdHint, children }: AppShellProps) {
                 Pocket365
               </div>
               <div className="text-xs text-slate-400">
-                Single-Tenant M365 Admin
+                M365 Security & MSP Console
               </div>
             </div>
           </Link>
+
+          {/* Global Multi-Tenant Switcher */}
+          {accessibleTenants.length > 0 && (
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1">
+                <Building2 className="h-3 w-3" />
+                Active Tenant
+              </label>
+              <select
+                value={activeTenantId ?? accessibleTenants[0]?.id ?? ''}
+                disabled={switchTenantMutation.isPending}
+                onChange={(e) => switchTenantMutation.mutate(e.target.value)}
+                className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                {accessibleTenants.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.displayName}
+                    {t.primaryDomain ? ` (${t.primaryDomain})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-1">

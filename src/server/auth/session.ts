@@ -21,6 +21,7 @@ export interface SessionUser {
   role: UserRole
   groups: string[]
   expiresAt: number
+  activeTenantId: string | null
 }
 
 export function hashSessionToken(rawToken: string): string {
@@ -80,6 +81,7 @@ export function createSession(params: {
       role: params.role,
       groups: params.groups,
       expiresAt,
+      activeTenantId: null,
     },
   }
 }
@@ -124,6 +126,7 @@ export function getSessionByRawToken(rawToken: string | undefined): SessionUser 
     role: row.role,
     groups,
     expiresAt: row.expiresAt,
+    activeTenantId: row.activeTenantId ?? null,
   }
 }
 

@@ -1,6 +1,6 @@
 # Pocket365
 
-**Pocket365** (`pocket365`) is a production-ready, self-hosted, **single-tenant** Microsoft 365 management web application built with **TanStack Start** (TanStack Router, TanStack Query, and Nitro Node server output), **Node.js 22 LTS**, **TypeScript**, **SQLite + Drizzle ORM**, and **Microsoft Entra ID OIDC** authentication.
+**Pocket365** (`pocket365`) is a production-ready, self-hosted Microsoft 365 security, compliance, and **multi-tenant MSP** management web application built with **TanStack Start** (TanStack Router, TanStack Query, and Nitro Node server output), **Node.js 22 LTS**, **TypeScript**, **SQLite + Drizzle ORM** (with PostgreSQL scale-out config), and **Microsoft Entra ID OIDC** authentication.
 
 Designed for clean container deployment via **GitHub Actions → GHCR → Portainer** behind **Nginx Proxy Manager**.
 
@@ -22,6 +22,10 @@ Designed for clean container deployment via **GitHub Actions → GHCR → Portai
 - **Commercial Tiering & Licensing (`/billing`):**
   - Supports **Community**, **Pro**, and **Enterprise** tiers enforced server-side via `requireEntitlement(...)` (`HTTP 402` when `LICENSE_ENFORCEMENT=strict`; defaults to `off` for open self-hosted deployments).
   - Supports **offline Ed25519-signed JWT license keys** (`LICENSE_PUBLIC_KEY`) as well as **Stripe webhook subscription sync** (`POST /api/billing/webhook`).
+- **Multi-Tenant MSP Command Center (`/tenants`):**
+  - Seamlessly upgrades existing single-tenant deployments by auto-seeding `ENTRA_TENANT_ID` as the primary tenant.
+  - Onboard additional customer M365 tenants via **1-click Microsoft Admin Consent** (`/api/tenants/consent-callback`) or **dedicated per-tenant app credentials** (encrypted at rest with AES-256-GCM).
+  - Strict **per-tenant Graph token & client isolation**, **Global Tenant Switcher** in the sidebar, **per-tenant technician scoping** (`tenant_access`), and **Cross-Tenant CIS + MFA Posture Scanning**.
 - **App-Only Microsoft Graph Client:** Supports **Client Secret** or **X.509 Certificate (`RS256` + `x5t`)** authentication, token caching, automatic 401 refresh, and `429 Too Many Requests` (`Retry-After`) + `503`/`504` exponential backoff.
 - **SQLite Persistence & Async Job Runner:** Stored at `/data/pocket365.db` (defaults to `./data/pocket365.db` locally) with WAL mode, auto-migrations on startup, server-side sessions, audit log, runtime settings, and background bulk job execution.
 - **Reverse Proxy Ready:** Respects `X-Forwarded-Proto`, `X-Forwarded-Host`, and `X-Forwarded-For`, uses `APP_BASE_URL` for OIDC redirect URIs, and sets `HttpOnly`, `Secure`, `SameSite=Lax` cookies automatically over HTTPS.

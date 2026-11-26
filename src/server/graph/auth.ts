@@ -41,13 +41,26 @@ export async function createClientAssertionJwt(params: {
     .sign(key)
 }
 
+export interface TenantGraphCredentials {
+  entraTenantId: string
+  clientId: string
+  clientSecret?: string
+  certThumbprint?: string
+  certPrivateKey?: string
+}
+
 export class GraphTokenProvider {
   private cache: CachedToken | null = null
   private inFlight: Promise<string> | null = null
   private readonly fetchImpl: typeof fetch
+  private readonly overrideCredentials?: TenantGraphCredentials
 
-  constructor(fetchImpl: typeof fetch = fetch) {
+  constructor(
+    fetchImpl: typeof fetch = fetch,
+    overrideCredentials?: TenantGraphCredentials,
+  ) {
     this.fetchImpl = fetchImpl
+    this.overrideCredentials = overrideCredentials
   }
 
   public invalidate(): void {
@@ -76,33 +89,41 @@ export class GraphTokenProvider {
 
   private async acquireToken(): Promise<string> {
     const cfg = getConfig()
-    if (!cfg.entraTenantId || !cfg.graphClientId) {
+    const creds: TenantGraphCredentials = this.overrideCredentials ?? {
+      entraTenantId: cfg.entraTenantId,
+      clientId: cfg.graphClientId,
+      clientSecret: cfg.graphClientSecret,
+      certThumbprint: cfg.graphCertThumbprint,
+      certPrivateKey: cfg.graphCertPrivateKey,
+    }
+
+    if (!creds.entraTenantId || !creds.clientId) {
       throw new Error(
         'Microsoft Graph app-only authentication is not configured (missing ENTRA_TENANT_ID or GRAPH_CLIENT_ID).',
       )
     }
 
-    const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(cfg.entraTenantId)}/oauth2/v2.0/token`
+    const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(creds.entraTenantId)}/oauth2/v2.0/token`
     const body = new URLSearchParams({
-      client_id: cfg.graphClientId,
+      client_id: creds.clientId,
       scope: 'https://graph.microsoft.com/.default',
       grant_type: 'client_credentials',
     })
 
-    if (cfg.graphCertThumbprint && cfg.graphCertPrivateKey) {
+    if (creds.certThumbprint && creds.certPrivateKey) {
       const assertion = await createClientAssertionJwt({
-        clientId: cfg.graphClientId,
+        clientId: creds.clientId,
         tokenUrl,
-        thumbprintHex: cfg.graphCertThumbprint,
-        privateKeyPem: cfg.graphCertPrivateKey,
+        thumbprintHex: creds.certThumbprint,
+        privateKeyPem: creds.certPrivateKey,
       })
       body.set(
         'client_assertion_type',
         'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
       )
       body.set('client_assertion', assertion)
-    } else if (cfg.graphClientSecret) {
-      body.set('client_secret', cfg.graphClientSecret)
+    } else if (creds.clientSecret) {
+      body.set('client_secret', creds.clientSecret)
     } else {
       throw new Error(
         'Microsoft Graph credentials missing. Configure GRAPH_CLIENT_SECRET or GRAPH_CERT_THUMBPRINT + GRAPH_CERT_PRIVATE_KEY.',

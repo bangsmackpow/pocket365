@@ -44,7 +44,12 @@ function RootDocument() {
       <body className="min-h-screen bg-slate-50 text-slate-900">
         <QueryClientProvider client={queryClient}>
           {auth.user && !isLoginRoute ? (
-            <AppShell user={auth.user} tenantIdHint={auth.tenantIdHint}>
+            <AppShell
+              user={auth.user}
+              tenantIdHint={auth.tenantIdHint}
+              activeTenantId={auth.activeTenantId}
+              accessibleTenants={auth.accessibleTenants}
+            >
               <Outlet />
             </AppShell>
           ) : (

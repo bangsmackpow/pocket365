@@ -23,6 +23,7 @@ export const sessions = sqliteTable(
     lastSeenAt: integer('last_seen_at').notNull(),
     ipAddress: text('ip_address'),
     userAgent: text('user_agent'),
+    activeTenantId: text('active_tenant_id'),
   },
   (table) => [
     index('idx_sessions_expires_at').on(table.expiresAt),
@@ -197,6 +198,52 @@ export const licenseState = sqliteTable('license_state', {
   updatedAt: integer('updated_at').notNull(),
 })
 
+export type TenantConnectionMode =
+  | 'env_primary'
+  | 'admin_consent'
+  | 'app_credentials'
+
+export type TenantStatus = 'active' | 'pending_consent' | 'error' | 'disabled'
+
+export const managedTenants = sqliteTable(
+  'managed_tenants',
+  {
+    id: text('id').primaryKey(),
+    entraTenantId: text('entra_tenant_id').notNull().unique(),
+    displayName: text('display_name').notNull(),
+    primaryDomain: text('primary_domain').notNull().default(''),
+    connectionMode: text('connection_mode')
+      .$type<TenantConnectionMode>()
+      .notNull(),
+    clientId: text('client_id').notNull().default(''),
+    clientSecretEnc: text('client_secret_enc'),
+    certThumbprint: text('cert_thumbprint'),
+    certPrivateKeyEnc: text('cert_private_key_enc'),
+    isPrimary: integer('is_primary').notNull().default(0),
+    status: text('status').$type<TenantStatus>().notNull().default('active'),
+    lastHealthCheckAt: integer('last_health_check_at'),
+    lastHealthError: text('last_health_error'),
+    lastCisScorePct: integer('last_cis_score_pct'),
+    lastMfaCoveragePct: integer('last_mfa_coverage_pct'),
+    createdBy: text('created_by').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [index('idx_managed_tenants_entra_id').on(table.entraTenantId)],
+)
+
+export const tenantAccess = sqliteTable(
+  'tenant_access',
+  {
+    id: text('id').primaryKey(),
+    principal: text('principal').notNull(), // lowercase UPN or OID
+    managedTenantId: text('managed_tenant_id').notNull(),
+    createdBy: text('created_by').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [index('idx_tenant_access_principal').on(table.principal)],
+)
+
 export type SessionRow = typeof sessions.$inferSelect
 export type AuditLogRow = typeof auditLogs.$inferSelect
 export type JobRow = typeof jobs.$inferSelect
@@ -207,3 +254,5 @@ export type AlertWebhookRow = typeof alertWebhooks.$inferSelect
 export type AlertEventRow = typeof alertEvents.$inferSelect
 export type OnboardingTemplateRow = typeof onboardingTemplates.$inferSelect
 export type LicenseStateRow = typeof licenseState.$inferSelect
+export type ManagedTenantRow = typeof managedTenants.$inferSelect
+export type TenantAccessRow = typeof tenantAccess.$inferSelect
