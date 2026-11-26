@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "pocket365",
+  "workers_dev": false,
   "compatibility_date": "2025-11-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
@@ -14,14 +15,14 @@
     {
       "binding": "DB",
       "database_name": "pocket365-db",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "6491c942-7be2-4876-bf3d-1cea1b423423",
       "migrations_dir": "drizzle"
     }
   ],
   "kv_namespaces": [
     {
       "binding": "POCKET365_KV",
-      "id": "00000000000000000000000000000000"
+      "id": "efd5bccaa2f94be9a2cb4c678268afb6"
     }
   ],
   "r2_buckets": [

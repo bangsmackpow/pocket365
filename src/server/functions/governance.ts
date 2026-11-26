@@ -138,6 +138,7 @@ const REMEDIATION_TO_CHECK_ID: Record<CisRemediationId, string> = {
   block_msol_powershell: 'block_msol_powershell',
   enable_admin_consent_workflow: 'admin_consent_workflow',
   disable_email_verified_join: 'email_verified_join',
+  enable_authenticator_context: 'auth_ms_authenticator_context',
   disable_sms_auth_method: 'auth_disable_sms',
   disable_voice_auth_method: 'auth_disable_voice',
   sp_disable_anonymous_links: 'sp_anonymous_links',
@@ -158,6 +159,7 @@ const remediationSchema = z.object({
     'block_msol_powershell',
     'enable_admin_consent_workflow',
     'disable_email_verified_join',
+    'enable_authenticator_context',
     'disable_sms_auth_method',
     'disable_voice_auth_method',
     'sp_disable_anonymous_links',
@@ -253,6 +255,11 @@ export const applyCisRemediationFn = createServerFn({ method: 'POST' })
             allowEmailVerifiedUsersToJoinOrganization: false,
           })
           summary = 'Blocked self-service email-verified tenant join (CIS 5.1.2.7).'
+          break
+        case 'enable_authenticator_context':
+          await graph.setMicrosoftAuthenticatorContext(true)
+          summary =
+            'Enabled application and location context on Microsoft Authenticator push prompts (CIS 5.2.3.1 / NIST IA.L2-3.5.3).'
           break
         case 'disable_sms_auth_method':
           await graph.setAuthenticationMethodConfigState('Sms', 'disabled')

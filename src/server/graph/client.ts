@@ -1519,6 +1519,37 @@ export class MicrosoftGraphClient {
     )
   }
 
+  public async setMicrosoftAuthenticatorContext(enabled: boolean): Promise<void> {
+    const state = enabled ? 'enabled' : 'disabled'
+    await this.request<void>(
+      '/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/MicrosoftAuthenticator',
+      {
+        method: 'PATCH',
+        body: {
+          '@odata.type':
+            '#microsoft.graph.microsoftAuthenticatorAuthenticationMethodConfiguration',
+          state: 'enabled',
+          featureSettings: {
+            displayAppInformationRequiredState: {
+              state,
+              includeTarget: {
+                targetType: 'group',
+                id: 'all_users',
+              },
+            },
+            displayLocationInformationRequiredState: {
+              state,
+              includeTarget: {
+                targetType: 'group',
+                id: 'all_users',
+              },
+            },
+          },
+        },
+      },
+    )
+  }
+
   public async createUser(input: CreateEntraUserInput): Promise<GraphUser> {
     return this.request<GraphUser>('/users', {
       method: 'POST',

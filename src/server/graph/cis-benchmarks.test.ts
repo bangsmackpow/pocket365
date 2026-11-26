@@ -153,4 +153,70 @@ describe('CIS Microsoft 365 Benchmarks Evaluator', () => {
     expect(summary.scorePct).toBe(100)
     expect(summary.oneClickFixable).toBe(0)
   })
+
+  it('evaluates Microsoft Authenticator context (CIS 5.2.3.1 / NIST IA.L2-3.5.3) and provides 1-click remediation', () => {
+    const unhardenedAuth: CisTenantSnapshot = {
+      securityDefaults: { id: 'sd', isEnabled: true },
+      conditionalAccessEnabledCount: 1,
+      adminConsentPolicy: { isEnabled: true },
+      authorizationPolicy: {
+        id: 'ap',
+        allowInvitesFrom: 'adminsAndGuestInviters',
+        guestUserRoleId: GUEST_ROLE_IDS.RESTRICTED,
+        blockMsolPowerShell: true,
+      },
+      directoryRoles: [],
+      mfaRegistrations: [],
+      domains: [],
+      authMethodsPolicy: {
+        id: 'amp',
+        authenticationMethodConfigurations: [
+          {
+            id: 'microsoftAuthenticator',
+            state: 'enabled',
+            featureSettings: {
+              displayAppInformationRequiredState: { state: 'disabled' },
+              displayLocationInformationRequiredState: { state: 'disabled' },
+            },
+          },
+        ],
+      },
+    }
+
+    const checks = evaluateCisBenchmarks(unhardenedAuth)
+    const authCheck = checks.find((c) => c.id === 'auth_ms_authenticator_context')
+    expect(authCheck).toBeDefined()
+    expect(authCheck?.status).toBe('warn')
+    expect(authCheck?.nistRef).toContain('NIST IA.L2-3.5.3')
+    expect(authCheck?.remediationId).toBe('enable_authenticator_context')
+    expect(authCheck?.remediationLabel).toBe(
+      '1-Click: Enable Authenticator App & Location Context',
+    )
+    expect(authCheck?.howToResolve[0]).toContain('https://entra.microsoft.com')
+
+    // Now test with context enabled
+    const hardenedAuth: CisTenantSnapshot = {
+      ...unhardenedAuth,
+      authMethodsPolicy: {
+        id: 'amp',
+        authenticationMethodConfigurations: [
+          {
+            id: 'microsoftAuthenticator',
+            state: 'enabled',
+            featureSettings: {
+              displayAppInformationRequiredState: { state: 'enabled' },
+              displayLocationInformationRequiredState: { state: 'enabled' },
+            },
+          },
+        ],
+      },
+    }
+
+    const hardenedChecks = evaluateCisBenchmarks(hardenedAuth)
+    const hardenedCheck = hardenedChecks.find(
+      (c) => c.id === 'auth_ms_authenticator_context',
+    )
+    expect(hardenedCheck?.status).toBe('pass')
+    expect(hardenedCheck?.remediationId).toBeUndefined()
+  })
 })

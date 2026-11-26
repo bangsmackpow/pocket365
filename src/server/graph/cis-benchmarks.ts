@@ -32,6 +32,7 @@ export type CisRemediationId =
   | 'block_msol_powershell'
   | 'enable_admin_consent_workflow'
   | 'disable_email_verified_join'
+  | 'enable_authenticator_context'
   | 'disable_sms_auth_method'
   | 'disable_voice_auth_method'
   | 'sp_disable_anonymous_links'
@@ -768,10 +769,17 @@ export function evaluateCisBenchmarks(
         expectedValue:
           'Microsoft Authenticator enabled with application name and geographic location shown on MFA prompts',
         howToResolve: [
-          'Open Entra admin center → Protection → Authentication methods → Policies → Microsoft Authenticator → Configure.',
-          'Enable "Show application name in push and passwordless notifications" and "Show geographic location in push and passwordless notifications" for All users.',
+          'Direct link: https://entra.microsoft.com/#view/Microsoft_AAD_IAM/AuthenticationMethodsMenuBlade/~/AdminAuthMethods',
+          'Open Microsoft Entra admin center (entra.microsoft.com) → Protection → Authentication methods → Policies.',
+          'Select Microsoft Authenticator → Click Configure tab at the top.',
+          'Set "Show application name in push and passwordless notifications" and "Show geographic location in push and passwordless notifications" to Enabled for All users.',
         ],
-        requiredPermissions: ['Policy.Read.All'],
+        remediationId: !authReady ? 'enable_authenticator_context' : undefined,
+        remediationLabel: '1-Click: Enable Authenticator App & Location Context',
+        requiredPermissions: [
+          'Policy.Read.All',
+          'Policy.ReadWrite.AuthenticationMethod',
+        ],
       })
     }
 
