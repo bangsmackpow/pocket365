@@ -95,12 +95,16 @@ export class GraphTokenProvider {
 
     const stored = await getStoredEntraSetup()
     if (stored && stored.entraTenantId) {
+      const hasCert = Boolean(
+        stored.graphCertThumbprint && stored.graphCertPrivateKeyEnc,
+      )
+      const secretEnc =
+        stored.graphClientSecretEnc ||
+        (!hasCert ? stored.oidcClientSecretEnc : null)
       return {
         entraTenantId: stored.entraTenantId,
         clientId: stored.graphClientId || stored.oidcClientId,
-        clientSecret: stored.graphClientSecretEnc
-          ? decryptSecret(stored.graphClientSecretEnc)
-          : undefined,
+        clientSecret: secretEnc ? decryptSecret(secretEnc) : undefined,
         certThumbprint: stored.graphCertThumbprint || undefined,
         certPrivateKey: stored.graphCertPrivateKeyEnc
           ? decryptSecret(stored.graphCertPrivateKeyEnc)

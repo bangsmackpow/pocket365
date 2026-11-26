@@ -1,7 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { requireRole, requireSession } from '~/server/auth/guards'
-import { getConfigReadiness } from '~/server/config'
 import { listAuditLogs, recordAuditLog } from '~/server/db/audit'
 import {
   getRuntimeSettings,
@@ -15,13 +14,14 @@ import {
 } from '~/server/graph/client'
 import { listJobs } from '~/server/graph/jobs'
 import { getClientIp } from '~/server/http/proxy'
+import { getEffectiveConfigReadiness } from '~/server/setup/service'
 
 export const getDashboardDataFn = createServerFn({ method: 'GET' }).handler(
   async () => {
     await requireSession()
 
-    const readiness = getConfigReadiness()
-    const [settings, recentAudits, recentJobs] = await Promise.all([
+    const [readiness, settings, recentAudits, recentJobs] = await Promise.all([
+      getEffectiveConfigReadiness(),
       getRuntimeSettings(),
       listAuditLogs({ limit: 8 }),
       listJobs({ limit: 8 }),

@@ -1,14 +1,16 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { getCloudflareEnv } from '~/server/cf/env'
-import { getConfigReadiness } from '~/server/config'
 import { checkDatabaseHealth } from '~/server/db'
+import { getEffectiveConfigReadiness } from '~/server/setup/service'
 
 export const Route = createFileRoute('/api/health')({
   server: {
     handlers: {
       GET: async () => {
-        const dbHealth = await checkDatabaseHealth()
-        const config = getConfigReadiness()
+        const [dbHealth, config] = await Promise.all([
+          checkDatabaseHealth(),
+          getEffectiveConfigReadiness(),
+        ])
         const cfEnv = getCloudflareEnv()
         const healthy = dbHealth.ok
 

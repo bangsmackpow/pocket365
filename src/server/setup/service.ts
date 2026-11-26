@@ -1,6 +1,10 @@
 import crypto from 'node:crypto'
 import { eq } from 'drizzle-orm'
-import { getConfig } from '~/server/config'
+import {
+  getConfig,
+  getConfigReadiness,
+  type ConfigReadiness,
+} from '~/server/config'
 import { getDb } from '~/server/db'
 import { appSettings } from '~/server/db/schema'
 import { GraphTokenProvider } from '~/server/graph/auth'
@@ -134,6 +138,49 @@ export async function isInitialSetupRequired(): Promise<boolean> {
   if (cfg.deploymentMode === 'saas') return false
   const effective = await getEffectiveEntraConfig()
   return effective.source === 'unconfigured'
+}
+
+/**
+ * Returns full instance readiness combining Cloudflare Worker secrets/env vars
+ * with AES-256-GCM encrypted credentials persisted via the self-hosted `/setup` wizard.
+ */
+export async function getEffectiveConfigReadiness(): Promise<ConfigReadiness> {
+  const base = getConfigReadiness()
+  const effective = await getEffectiveEntraConfig()
+
+  const hasCertAuth = Boolean(
+    effective.graphClientId &&
+      effective.graphCertThumbprint &&
+      effective.graphCertPrivateKey,
+  )
+  const hasSecretAuth = Boolean(
+    effective.graphClientId && effective.graphClientSecret,
+  )
+
+  return {
+    ...base,
+    singleTenantConfigured:
+      base.singleTenantConfigured || Boolean(effective.entraTenantId),
+    oidcConfigured:
+      base.oidcConfigured ||
+      Boolean(
+        effective.entraTenantId &&
+          effective.oidcClientId &&
+          effective.oidcClientSecret,
+      ),
+    graphConfigured:
+      base.graphConfigured ||
+      Boolean(effective.entraTenantId && (hasCertAuth || hasSecretAuth)),
+    graphAuthMode: hasCertAuth
+      ? 'certificate'
+      : hasSecretAuth
+        ? 'client_secret'
+        : base.graphAuthMode,
+    rbacConfigured:
+      base.rbacConfigured ||
+      effective.ownerEntries.length > 0 ||
+      effective.adminEntries.length > 0,
+  }
 }
 
 export async function saveEntraSetupConfig(params: {

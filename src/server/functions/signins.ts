@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import { requireSession } from '~/server/auth/guards'
-import { getConfigReadiness } from '~/server/config'
+import { getEffectiveConfigReadiness } from '~/server/setup/service'
 import { getGraphClient, type GraphSignIn } from '~/server/graph/client'
 import {
   classifyGraphError,
@@ -157,7 +157,7 @@ export const getGraphPermissionsStatusFn = createServerFn({
   method: 'GET',
 }).handler(async () => {
   await requireSession()
-  const readiness = getConfigReadiness()
+  const readiness = await getEffectiveConfigReadiness()
   if (!readiness.graphConfigured) {
     return {
       grantedRoles: [] as string[],

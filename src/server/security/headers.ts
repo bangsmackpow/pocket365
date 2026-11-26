@@ -65,6 +65,9 @@ export function withSecurityHeaders(
   if (!headers.has('X-Frame-Options')) {
     headers.set('X-Frame-Options', 'DENY')
   }
+  if (!headers.has('X-Robots-Tag')) {
+    headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive')
+  }
   if (!headers.has('Referrer-Policy')) {
     headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
   }

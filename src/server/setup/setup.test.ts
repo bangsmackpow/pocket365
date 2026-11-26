@@ -8,8 +8,10 @@ import {
   isEncryptedValue,
   needsReEncryption,
 } from '~/server/security/crypto'
+import { withSecurityHeaders } from '~/server/security/headers'
 import {
   generatePowerShellBootstrapScript,
+  getEffectiveConfigReadiness,
   getEffectiveEntraConfig,
   isInitialSetupRequired,
   saveEntraSetupConfig,
@@ -69,6 +71,7 @@ describe('Phase CF-3 Self-Hosted /setup Wizard & Key-Versioned enc:v2 Rotation',
 
   it('verifies setup bootstrap token, saves encrypted Entra config in D1, and locks setup', async () => {
     expect(await isInitialSetupRequired()).toBe(true)
+    expect((await getEffectiveConfigReadiness()).graphConfigured).toBe(false)
     expect(verifySetupBootstrapToken('wrong-token')).toBe(false)
     expect(verifySetupBootstrapToken('bootstrap-secret-xyz')).toBe(true)
 
@@ -90,6 +93,17 @@ describe('Phase CF-3 Self-Hosted /setup Wizard & Key-Versioned enc:v2 Rotation',
     expect(effective.oidcClientSecret).toBe('oidc-secret-value-1234')
     expect(effective.graphClientSecret).toBe('graph-secret-value-5678')
     expect(effective.ownerEntries).toEqual(['founder@contoso.com'])
+
+    const readiness = await getEffectiveConfigReadiness()
+    expect(readiness.oidcConfigured).toBe(true)
+    expect(readiness.graphConfigured).toBe(true)
+    expect(readiness.graphAuthMode).toBe('client_secret')
+    expect(readiness.rbacConfigured).toBe(true)
+
+    const secured = withSecurityHeaders(new Response('ok'))
+    expect(secured.headers.get('X-Robots-Tag')).toBe(
+      'noindex, nofollow, noarchive',
+    )
   })
 
   it('generates a ready-to-run PowerShell Entra bootstrap script with canonical callback URL', () => {

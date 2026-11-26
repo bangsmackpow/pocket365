@@ -27,25 +27,57 @@ export const getSetupWizardStateFn = createServerFn({ method: 'GET' }).handler(
 
     const baseUrl = getCanonicalBaseUrl(getRequest())
     const locked = !needsSetup && session?.role !== 'owner'
+    const requiresBootstrapToken = Boolean(cfg.setupBootstrapToken) && needsSetup
 
     return {
       deploymentMode: cfg.deploymentMode,
       needsSetup,
       locked,
       configSource: effective.source,
-      requiresBootstrapToken: Boolean(cfg.setupBootstrapToken) && needsSetup,
+      requiresBootstrapToken,
       hasDedicatedEncryptionKey: cfg.dataEncryptionKey.length >= 32,
       hasSessionSecret: cfg.sessionSecret.length >= 32,
       appBaseUrl: baseUrl,
       callbackUrl: `${baseUrl}/api/auth/callback`,
-      existingTenantId: locked ? '' : effective.entraTenantId,
-      existingOidcClientId: locked ? '' : effective.oidcClientId,
-      existingGraphClientId: locked ? '' : effective.graphClientId,
-      existingOwners: locked ? '' : effective.ownerEntries.join(', '),
-      powershellScript: locked ? '' : generatePowerShellBootstrapScript(baseUrl),
+      existingTenantId: locked || requiresBootstrapToken ? '' : effective.entraTenantId,
+      existingOidcClientId: locked || requiresBootstrapToken ? '' : effective.oidcClientId,
+      existingGraphClientId: locked || requiresBootstrapToken ? '' : effective.graphClientId,
+      existingOwners: locked || requiresBootstrapToken ? '' : effective.ownerEntries.join(', '),
+      powershellScript:
+        locked || requiresBootstrapToken
+          ? ''
+          : generatePowerShellBootstrapScript(baseUrl),
     }
   },
 )
+
+const unlockSetupSchema = z.object({
+  bootstrapToken: z.string().min(1, 'Setup bootstrap token is required'),
+})
+
+export const unlockSetupWizardFn = createServerFn({ method: 'POST' })
+  .validator((input: unknown) => unlockSetupSchema.parse(input))
+  .handler(async ({ data }) => {
+    const req = getRequest()
+    await enforceRateLimitAsync('auth', getClientIp(req) || 'setup', req)
+
+    const needsSetup = await isInitialSetupRequired()
+    if (!needsSetup) {
+      throw new Error('Pocket365 is already configured and setup is locked.')
+    }
+    if (!verifySetupBootstrapToken(data.bootstrapToken)) {
+      throw new Error(
+        'Invalid SETUP_BOOTSTRAP_TOKEN. Check your Cloudflare Worker secret and try again.',
+      )
+    }
+
+    const baseUrl = getCanonicalBaseUrl(req)
+    return {
+      unlocked: true,
+      callbackUrl: `${baseUrl}/api/auth/callback`,
+      powershellScript: generatePowerShellBootstrapScript(baseUrl),
+    }
+  })
 
 const testConnectionSchema = z.object({
   bootstrapToken: z.string().optional(),

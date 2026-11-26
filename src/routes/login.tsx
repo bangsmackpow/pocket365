@@ -118,6 +118,12 @@ function LoginPage() {
             Continue with Microsoft Entra ID
           </a>
 
+          <p className="text-[11px] text-slate-500 leading-relaxed text-center">
+            Independent M365 administration console. Sign-in redirects directly
+            to Microsoft (<code>login.microsoftonline.com</code>) via OAuth 2.0
+            / OIDC — Pocket365 never sees or stores your Microsoft password.
+          </p>
+
           <div className="pt-4 border-t border-slate-100 space-y-2 text-xs text-slate-500">
             <div className="font-medium text-slate-700">
               Instance Readiness

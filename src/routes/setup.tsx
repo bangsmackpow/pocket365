@@ -15,6 +15,7 @@ import {
   getSetupWizardStateFn,
   saveSetupConfigFn,
   testSetupConnectionFn,
+  unlockSetupWizardFn,
 } from '~/server/functions/setup'
 
 export const Route = createFileRoute('/setup')({
@@ -31,6 +32,7 @@ function SetupWizardPage() {
   })
 
   const [bootstrapToken, setBootstrapToken] = useState('')
+  const [unlockedScript, setUnlockedScript] = useState<string | null>(null)
   const [jsonBlob, setJsonBlob] = useState('')
   const [entraTenantId, setEntraTenantId] = useState('')
   const [oidcClientId, setOidcClientId] = useState('')
@@ -47,6 +49,13 @@ function SetupWizardPage() {
   const [copied, setCopied] = useState(false)
   const [blobMsg, setBlobMsg] = useState<string | null>(null)
   const [savedOk, setSavedOk] = useState(false)
+
+  const unlockMutation = useMutation({
+    mutationFn: () => unlockSetupWizardFn({ data: { bootstrapToken } }),
+    onSuccess: (res) => {
+      setUnlockedScript(res.powershellScript)
+    },
+  })
 
   const testMutation = useMutation({
     mutationFn: () =>
@@ -115,10 +124,11 @@ function SetupWizardPage() {
     }
   }
 
+  const effectiveScript = unlockedScript ?? stateQuery.data?.powershellScript ?? ''
+
   const copyScript = async () => {
-    const script = stateQuery.data?.powershellScript
-    if (!script) return
-    await navigator.clipboard.writeText(script)
+    if (!effectiveScript) return
+    await navigator.clipboard.writeText(effectiveScript)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -154,6 +164,84 @@ function SetupWizardPage() {
           >
             Go to Sign In
           </Link>
+        </div>
+      </div>
+    )
+  }
+
+  if (data?.requiresBootstrapToken && !unlockedScript) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
+        <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-slate-200 p-8 space-y-5">
+          <div className="flex items-center gap-3">
+            <div className="h-11 w-11 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
+              <Lock className="h-5 w-5" />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold text-slate-900">
+                Unlock First-Run Setup
+              </h1>
+              <p className="text-xs text-slate-500">
+                Protected by your Cloudflare Worker{' '}
+                <code>SETUP_BOOTSTRAP_TOKEN</code> secret
+              </p>
+            </div>
+          </div>
+
+          <p className="text-xs text-slate-600 leading-relaxed">
+            Enter your deployment&apos;s bootstrap token to reveal the initial
+            configuration wizard. Once setup completes, this endpoint locks
+            automatically.
+          </p>
+
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (bootstrapToken.trim()) {
+                unlockMutation.mutate()
+              }
+            }}
+          >
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Setup Bootstrap Token
+              </label>
+              <input
+                type="password"
+                value={bootstrapToken}
+                onChange={(e) => setBootstrapToken(e.target.value)}
+                placeholder="Paste SETUP_BOOTSTRAP_TOKEN"
+                autoComplete="off"
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm font-mono"
+              />
+            </div>
+
+            {unlockMutation.error && (
+              <div className="rounded-lg p-3 bg-rose-50 border border-rose-200 text-xs text-rose-800">
+                {unlockMutation.error instanceof Error
+                  ? unlockMutation.error.message
+                  : String(unlockMutation.error)}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={unlockMutation.isPending || !bootstrapToken.trim()}
+              className="w-full px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold"
+            >
+              {unlockMutation.isPending ? 'Verifying...' : 'Unlock Setup Wizard'}
+            </button>
+          </form>
+
+          <div className="pt-2 border-t border-slate-100 text-center">
+            <Link
+              to="/login"
+              className="text-xs text-slate-500 hover:text-slate-700 underline"
+            >
+              Back to Sign In
+            </Link>
+          </div>
         </div>
       </div>
     )
@@ -248,7 +336,7 @@ function SetupWizardPage() {
           </p>
 
           <pre className="bg-slate-950 text-slate-200 text-[11px] p-4 rounded-xl overflow-x-auto max-h-52 font-mono">
-            {data?.powershellScript}
+            {effectiveScript}
           </pre>
 
           <div className="flex gap-2">

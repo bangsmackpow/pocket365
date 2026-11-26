@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import { and, desc, eq, gte } from 'drizzle-orm'
-import { getConfigReadiness } from '~/server/config'
+import { getEffectiveConfigReadiness } from '~/server/setup/service'
 import { getDb } from '~/server/db'
 import {
   alertEvents,
@@ -391,7 +391,8 @@ export async function runAutomatedAlertChecks(
  * Invoked by Cloudflare Cron Trigger (`triggers.crons` in wrangler.jsonc).
  */
 export async function runScheduledAlertSweep(): Promise<AlertRunSummary | null> {
-  if (!getConfigReadiness().graphConfigured) return null
+  const readiness = await getEffectiveConfigReadiness()
+  if (!readiness.graphConfigured) return null
   const db = getDb()
   const hasEnabledHook = await db
     .select()

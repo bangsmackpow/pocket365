@@ -104,6 +104,21 @@ export default createServerEntry({
       const normalizedReq = withForwardedUrl(request)
       const url = new URL(normalizedReq.url)
       const pathname = url.pathname
+
+      // 0. Disallow automated search/crawler indexing of this private admin console
+      if (pathname === '/robots.txt' && normalizedReq.method === 'GET') {
+        return withSecurityHeaders(
+          new Response('User-agent: *\nDisallow: /\n', {
+            status: 200,
+            headers: {
+              'Content-Type': 'text/plain; charset=utf-8',
+              'Cache-Control': 'public, max-age=3600',
+            },
+          }),
+          normalizedReq,
+        )
+      }
+
       const clientIp =
         normalizedReq.headers.get('cf-connecting-ip') ||
         getClientIp(normalizedReq) ||

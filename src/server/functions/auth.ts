@@ -1,7 +1,10 @@
 import { createServerFn } from '@tanstack/react-start'
 import { getCurrentSession } from '~/server/auth/guards'
-import { getConfig, getConfigReadiness } from '~/server/config'
-import { getEffectiveEntraConfig } from '~/server/setup/service'
+import { getConfig } from '~/server/config'
+import {
+  getEffectiveConfigReadiness,
+  getEffectiveEntraConfig,
+} from '~/server/setup/service'
 import {
   listAccessibleTenants,
   resolveActiveTenantForSession,
@@ -10,42 +13,10 @@ import {
 export const getSessionFn = createServerFn({ method: 'GET' }).handler(async () => {
   const session = await getCurrentSession()
   const cfg = getConfig()
-  const baseReadiness = getConfigReadiness()
-  const effective = await getEffectiveEntraConfig()
-
-  const hasCertAuth = Boolean(
-    effective.graphClientId &&
-      effective.graphCertThumbprint &&
-      effective.graphCertPrivateKey,
-  )
-  const hasSecretAuth = Boolean(
-    effective.graphClientId && effective.graphClientSecret,
-  )
-
-  const readiness = {
-    ...baseReadiness,
-    singleTenantConfigured:
-      baseReadiness.singleTenantConfigured || Boolean(effective.entraTenantId),
-    oidcConfigured:
-      baseReadiness.oidcConfigured ||
-      Boolean(
-        effective.entraTenantId &&
-          effective.oidcClientId &&
-          effective.oidcClientSecret,
-      ),
-    graphConfigured:
-      baseReadiness.graphConfigured ||
-      Boolean(effective.entraTenantId && (hasCertAuth || hasSecretAuth)),
-    graphAuthMode: hasCertAuth
-      ? ('certificate' as const)
-      : hasSecretAuth
-        ? ('client_secret' as const)
-        : baseReadiness.graphAuthMode,
-    rbacConfigured:
-      baseReadiness.rbacConfigured ||
-      effective.ownerEntries.length > 0 ||
-      effective.adminEntries.length > 0,
-  }
+  const [readiness, effective] = await Promise.all([
+    getEffectiveConfigReadiness(),
+    getEffectiveEntraConfig(),
+  ])
 
   const accessibleTenants = session
     ? (await listAccessibleTenants(session)).map((t) => ({

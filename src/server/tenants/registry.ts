@@ -16,10 +16,11 @@ import type { TenantGraphCredentials } from '~/server/graph/auth'
 import { buildCanonicalUrl } from '~/server/http/proxy'
 import { DEFAULT_ORG_ID } from '~/server/orgs/service'
 import { decryptSecret, encryptSecret } from '~/server/security/crypto'
+import { getEffectiveEntraConfig } from '~/server/setup/service'
 
 /**
  * In `self_hosted` mode, ensures the primary tenant configured via ENTRA_TENANT_ID
- * is seeded into `managed_tenants` under the default organization.
+ * or the `/setup` wizard is seeded into `managed_tenants` under the default organization.
  * In `saas` mode, organizations connect their own M365 tenants via Admin Consent.
  */
 export async function ensurePrimaryTenantSeeded(
@@ -29,7 +30,9 @@ export async function ensurePrimaryTenantSeeded(
   if (cfg.deploymentMode === 'saas' || organizationId !== DEFAULT_ORG_ID) {
     return null
   }
-  if (!cfg.entraTenantId) return null
+  const effective = await getEffectiveEntraConfig()
+  const primaryTenantId = cfg.entraTenantId || effective.entraTenantId
+  if (!primaryTenantId) return null
 
   const db = getDb()
   const existing = await db
@@ -38,7 +41,7 @@ export async function ensurePrimaryTenantSeeded(
     .where(
       and(
         eq(managedTenants.organizationId, DEFAULT_ORG_ID),
-        eq(managedTenants.entraTenantId, cfg.entraTenantId),
+        eq(managedTenants.entraTenantId, primaryTenantId),
       ),
     )
     .get()
@@ -51,11 +54,11 @@ export async function ensurePrimaryTenantSeeded(
   const row: ManagedTenantRow = {
     id: crypto.randomUUID(),
     organizationId: DEFAULT_ORG_ID,
-    entraTenantId: cfg.entraTenantId,
+    entraTenantId: primaryTenantId,
     displayName: 'Primary Tenant',
     primaryDomain: '',
     connectionMode: 'env_primary',
-    clientId: cfg.graphClientId || '',
+    clientId: cfg.graphClientId || effective.graphClientId || '',
     clientSecretEnc: null,
     certThumbprint: null,
     certPrivateKeyEnc: null,
@@ -65,7 +68,7 @@ export async function ensurePrimaryTenantSeeded(
     lastHealthError: null,
     lastCisScorePct: null,
     lastMfaCoveragePct: null,
-    createdBy: 'system:env',
+    createdBy: effective.source === 'd1_setup' ? 'system:setup' : 'system:env',
     createdAt: now,
     updatedAt: now,
   }

@@ -7,7 +7,7 @@ import {
   createSession,
   OIDC_COOKIE_NAME,
 } from '~/server/auth/session'
-import { getConfig, getConfigReadiness } from '~/server/config'
+import { getConfig } from '~/server/config'
 import { recordAuditLog } from '~/server/db/audit'
 import type { UserRole } from '~/server/db/schema'
 import { getGraphClient } from '~/server/graph/client'
@@ -20,7 +20,10 @@ import {
   DEFAULT_ORG_ID,
   findOrCreateOrgForEntraTenant,
 } from '~/server/orgs/service'
-import { getEffectiveEntraConfig } from '~/server/setup/service'
+import {
+  getEffectiveConfigReadiness,
+  getEffectiveEntraConfig,
+} from '~/server/setup/service'
 
 function redirectWithClearOidc(path: string, request: Request): Response {
   const headers = new Headers({
@@ -107,9 +110,13 @@ export const Route = createFileRoute('/api/auth/callback')({
             }
           } else {
             // Self-Hosted Single-Tenant Mode: strict env + /setup wizard RBAC enforcement
+            const [effective, readiness] = await Promise.all([
+              getEffectiveEntraConfig(),
+              getEffectiveConfigReadiness(),
+            ])
             if (
               (identity.hasGroupsOverage || groups.length === 0) &&
-              getConfigReadiness().graphConfigured
+              readiness.graphConfigured
             ) {
               try {
                 const graph = await getGraphClient()
@@ -119,7 +126,6 @@ export const Route = createFileRoute('/api/auth/callback')({
               }
             }
 
-            const effective = await getEffectiveEntraConfig()
             role = resolveUserRole({
               oid: identity.oid,
               preferredUsername: identity.preferredUsername,
