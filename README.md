@@ -9,11 +9,16 @@ Designed for clean container deployment via **GitHub Actions → GHCR → Portai
 ## Core Capabilities
 
 - **Single-Tenant Entra ID OIDC Authentication:** Authorization Code flow with PKCE (`S256`), single-use `state` + browser cookie binding, `nonce` verification, and RS256 JWKS signature + `iss`/`aud`/`tid` validation.
-- **Strict Two-Role RBAC (`viewer` vs `admin`):**
-  - `viewer` (`read-only`): Inspect dashboard, licenses, users, groups, audit logs, and background jobs. Cannot trigger mutations.
-  - `admin` (`full-admin`): Full access to directory/license/group mutations, bulk jobs, and non-secret runtime settings.
-  - Every mutating server function and API handler enforces `requireRole('admin')` server-side (`403 Forbidden`) and writes an immutable SQLite audit trail.
-  - Unmapped Entra users are strictly rejected.
+- **Strict Granular RBAC (`owner`, `admin`, `helpdesk`, `security_auditor`, `viewer`):**
+  - `viewer` (`read-only`): Inspect dashboards, logs, and reports. Cannot execute mutations.
+  - `helpdesk`: Read all + password reset, Temporary Access Pass (TAP), MFA method reset, revoke sessions, and Out-of-Office settings.
+  - `security_auditor`: Read all + trigger tenant-wide Mailbox BEC sweeps and CIS/compliance reports.
+  - `admin` / `owner` (`full-admin`): Full access to directory/license/group mutations, CIS 1-click fixes, offboarding/onboarding, BitLocker recovery keys, webhook configuration, and active session revocation.
+  - Every mutating server function and API handler enforces `requireRole(...)` / `requireCapability(...)` server-side (`403 Forbidden`) and writes an immutable SQLite audit trail.
+- **Defense-in-Depth Security Baseline:**
+  - Sliding-window **rate limiting** (`429 Too Many Requests` + `Retry-After`) across auth (`20/10m`), API (`180/m`), mutations (`60/m`), and heavy sweeps (`8/5m`), using `TRUSTED_PROXY_HOPS`-aware client IP extraction.
+  - **CSRF protection** (`Origin` + `Sec-Fetch-Site`), hardened **HTTP security headers** (CSP, `X-Frame-Options: DENY`, `nosniff`, HSTS), **AES-256-GCM encryption** for stored webhook URLs, **SSRF blocking** on outbound webhooks, and **CSV formula injection** protection.
+  - **Active Sessions Center (`/security`):** Idle + absolute session timeouts, view live SQLite sessions, and revoke individual or all other sessions.
 - **App-Only Microsoft Graph Client:** Supports **Client Secret** or **X.509 Certificate (`RS256` + `x5t`)** authentication, token caching, automatic 401 refresh, and `429 Too Many Requests` (`Retry-After`) + `503`/`504` exponential backoff.
 - **SQLite Persistence & Async Job Runner:** Stored at `/data/pocket365.db` (defaults to `./data/pocket365.db` locally) with WAL mode, auto-migrations on startup, server-side sessions, audit log, runtime settings, and background bulk job execution.
 - **Reverse Proxy Ready:** Respects `X-Forwarded-Proto`, `X-Forwarded-Host`, and `X-Forwarded-For`, uses `APP_BASE_URL` for OIDC redirect URIs, and sets `HttpOnly`, `Secure`, `SameSite=Lax` cookies automatically over HTTPS.

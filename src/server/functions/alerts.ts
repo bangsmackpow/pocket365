@@ -13,11 +13,15 @@ import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
 import { alertEvents, alertWebhooks } from '~/server/db/schema'
 import { getClientIp } from '~/server/http/proxy'
+import { decryptSecret, encryptSecret } from '~/server/security/crypto'
+import { enforceRateLimit } from '~/server/security/rate-limit'
+import { assertSafeWebhookUrl } from '~/server/security/ssrf'
 
-function maskWebhookUrl(url: string): string {
+function maskWebhookUrl(storedUrl: string): string {
   try {
-    const u = new URL(url)
-    return `${u.protocol}//${u.host}/••••${url.slice(-6)}`
+    const plain = decryptSecret(storedUrl)
+    const u = new URL(plain)
+    return `${u.protocol}//${u.host}/••••${plain.slice(-6)}`
   } catch {
     return '••••••'
   }
@@ -73,6 +77,8 @@ export const addAlertWebhookFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => createWebhookSchema.parse(input))
   .handler(async ({ data }) => {
     const session = requireRole('admin', undefined, 'alerts.add_webhook')
+    await assertSafeWebhookUrl(data.url.trim())
+
     const db = getDb()
     const now = Date.now()
     const id = crypto.randomUUID()
@@ -82,7 +88,7 @@ export const addAlertWebhookFn = createServerFn({ method: 'POST' })
         id,
         name: data.name.trim(),
         provider: data.provider,
-        url: data.url.trim(),
+        url: encryptSecret(data.url.trim()),
         enabled: 1,
         createdBy: session.upn,
         createdAt: now,
@@ -192,6 +198,7 @@ export const sendTestAlertFn = createServerFn({ method: 'POST' }).handler(
 export const runAlertChecksNowFn = createServerFn({ method: 'POST' }).handler(
   async () => {
     const session = requireRole('admin', undefined, 'alerts.run_checks')
+    enforceRateLimit('heavy', session.oid)
     const summary = await runAutomatedAlertChecks()
     recordAuditLog({
       actorOid: session.oid,

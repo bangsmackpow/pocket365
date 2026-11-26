@@ -1,6 +1,11 @@
 import { integer, sqliteTable, text, index } from 'drizzle-orm/sqlite-core'
 
-export type UserRole = 'admin' | 'viewer'
+export type UserRole =
+  | 'owner'
+  | 'admin'
+  | 'helpdesk'
+  | 'security_auditor'
+  | 'viewer'
 export type AuditStatus = 'success' | 'failure' | 'queued'
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed'
 

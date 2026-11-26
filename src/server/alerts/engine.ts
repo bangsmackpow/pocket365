@@ -15,6 +15,8 @@ import type { CisCheckResult } from '~/server/graph/cis-benchmarks'
 import { getGraphClient, type MicrosoftGraphClient } from '~/server/graph/client'
 import { analyzeAppCredentials } from '~/server/graph/insights-helpers'
 import { collectCisScan } from '~/server/graph/cis-scanner'
+import { decryptSecret } from '~/server/security/crypto'
+import { assertSafeWebhookUrl } from '~/server/security/ssrf'
 
 export interface OutgoingAlert {
   ruleKey: string
@@ -106,7 +108,9 @@ export async function deliverAlertToWebhooks(
 
   for (const hook of enabledHooks) {
     try {
-      const res = await fetchImpl(hook.url, {
+      const targetUrl = decryptSecret(hook.url)
+      await assertSafeWebhookUrl(targetUrl)
+      const res = await fetchImpl(targetUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formatWebhookPayload(hook.provider, alert)),

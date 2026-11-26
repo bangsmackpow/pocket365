@@ -2,6 +2,8 @@ import { getRequest, setResponseStatus } from '@tanstack/react-start/server'
 import { recordAuditLog } from '~/server/db/audit'
 import type { UserRole } from '~/server/db/schema'
 import { getClientIp } from '~/server/http/proxy'
+import { enforceRateLimit } from '~/server/security/rate-limit'
+import { hasCapability, isAdminRole, type AppCapability } from './roles'
 import { getSessionFromRequest, type SessionUser } from './session'
 
 export class AuthHttpError extends Error {
@@ -54,7 +56,7 @@ export function requireSession(explicitRequest?: Request): SessionUser {
 
 /**
  * Strictly enforces RBAC on the server for every protected/mutating server function
- * and API route handler. Returns 403 Forbidden when a 'viewer' attempts an 'admin' action.
+ * and API route handler. Returns 403 Forbidden when unauthorized.
  */
 export function requireRole(
   requiredRole: UserRole,
@@ -64,7 +66,20 @@ export function requireRole(
   const req = safeGetCurrentRequest(explicitRequest)
   const session = requireSession(req)
 
-  if (requiredRole === 'admin' && session.role !== 'admin') {
+  const allowed =
+    requiredRole === 'viewer'
+      ? true
+      : requiredRole === 'admin'
+        ? isAdminRole(session.role)
+        : requiredRole === 'owner'
+          ? isAdminRole(session.role)
+          : requiredRole === 'helpdesk'
+            ? hasCapability(session.role, 'helpdesk.actions')
+            : requiredRole === 'security_auditor'
+              ? hasCapability(session.role, 'audit.sweep')
+              : false
+
+  if (!allowed) {
     safeSetStatus(403)
     recordAuditLog({
       actorOid: session.oid,
@@ -78,8 +93,49 @@ export function requireRole(
     })
     throw new AuthHttpError(
       403,
-      'Forbidden: full-admin privileges are required for this operation.',
+      `Forbidden: ${requiredRole} privileges are required for this operation.`,
     )
+  }
+
+  if (requiredRole !== 'viewer') {
+    enforceRateLimit('mutation', session.oid, req)
+  }
+
+  return session
+}
+
+/**
+ * Capability-based server guard supporting granular RBAC roles
+ * (owner, admin, helpdesk, security_auditor, viewer) + mutation rate limiting.
+ */
+export function requireCapability(
+  capability: AppCapability,
+  explicitRequest?: Request,
+  actionContext?: string,
+): SessionUser {
+  const req = safeGetCurrentRequest(explicitRequest)
+  const session = requireSession(req)
+
+  if (!hasCapability(session.role, capability)) {
+    safeSetStatus(403)
+    recordAuditLog({
+      actorOid: session.oid,
+      actorUpn: session.upn,
+      actorRole: session.role,
+      action: actionContext ? `rbac.denied:${actionContext}` : 'rbac.denied',
+      target: req ? new URL(req.url).pathname : 'server_fn',
+      status: 'failure',
+      details: { requiredCapability: capability, actualRole: session.role },
+      ipAddress: getClientIp(req),
+    })
+    throw new AuthHttpError(
+      403,
+      `Forbidden: missing required capability "${capability}" (current role: ${session.role}).`,
+    )
+  }
+
+  if (capability !== 'read') {
+    enforceRateLimit('mutation', session.oid, req)
   }
 
   return session

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { eq, lt } from 'drizzle-orm'
+import { and, desc, eq, lt, ne } from 'drizzle-orm'
 import { getConfig } from '~/server/config'
 import { getDb } from '~/server/db'
 import { sessions, type UserRole } from '~/server/db/schema'
@@ -92,7 +92,9 @@ export function getSessionByRawToken(rawToken: string | undefined): SessionUser 
   if (!row) return null
 
   const now = Date.now()
-  if (row.expiresAt <= now) {
+  const cfg = getConfig()
+  const idleLimitMs = cfg.sessionIdleTimeoutMinutes * 60 * 1000
+  if (row.expiresAt <= now || now - row.lastSeenAt > idleLimitMs) {
     db.delete(sessions).where(eq(sessions.id, id)).run()
     return null
   }
@@ -142,6 +144,50 @@ export function destroySessionFromRequest(request?: Request): SessionUser | null
   const db = getDb()
   db.delete(sessions).where(eq(sessions.id, id)).run()
   return session
+}
+
+export function listActiveSessions(onlyUserOid?: string) {
+  const db = getDb()
+  const now = Date.now()
+  db.delete(sessions).where(lt(sessions.expiresAt, now)).run()
+
+  const rows = db
+    .select({
+      id: sessions.id,
+      userOid: sessions.userOid,
+      userUpn: sessions.userUpn,
+      displayName: sessions.displayName,
+      role: sessions.role,
+      ipAddress: sessions.ipAddress,
+      userAgent: sessions.userAgent,
+      createdAt: sessions.createdAt,
+      lastSeenAt: sessions.lastSeenAt,
+      expiresAt: sessions.expiresAt,
+    })
+    .from(sessions)
+    .where(onlyUserOid ? eq(sessions.userOid, onlyUserOid) : undefined)
+    .orderBy(desc(sessions.lastSeenAt))
+    .limit(100)
+    .all()
+
+  return rows
+}
+
+export function revokeSessionById(sessionId: string): void {
+  const db = getDb()
+  db.delete(sessions).where(eq(sessions.id, sessionId)).run()
+}
+
+export function revokeOtherUserSessions(
+  userOid: string,
+  keepSessionId: string,
+): number {
+  const db = getDb()
+  const res = db
+    .delete(sessions)
+    .where(and(eq(sessions.userOid, userOid), ne(sessions.id, keepSessionId)))
+    .run()
+  return res.changes
 }
 
 export function buildSessionCookieHeader(

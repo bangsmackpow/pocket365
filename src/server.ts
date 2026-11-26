@@ -2,7 +2,16 @@ import handler, { createServerEntry } from '@tanstack/react-start/server-entry'
 import { ensureAlertSchedulerStarted } from '~/server/alerts/engine'
 import { getDb } from '~/server/db'
 import { ensureJobWorkerStarted } from '~/server/graph/jobs'
-import { getForwardedHost, getForwardedProto } from '~/server/http/proxy'
+import {
+  getClientIp,
+  getForwardedHost,
+  getForwardedProto,
+} from '~/server/http/proxy'
+import {
+  verifyCsrfRequest,
+  withSecurityHeaders,
+} from '~/server/security/headers'
+import { checkRateLimit, rateLimitResponse } from '~/server/security/rate-limit'
 
 // Ensure SQLite schema migrations, background job worker, and alert scheduler initialize on startup
 try {
@@ -59,7 +68,39 @@ function withForwardedUrl(request: Request): Request {
 }
 
 export default createServerEntry({
-  fetch(request) {
-    return handler.fetch(withForwardedUrl(request))
+  async fetch(request) {
+    const normalizedReq = withForwardedUrl(request)
+    const url = new URL(normalizedReq.url)
+    const pathname = url.pathname
+    const clientIp = getClientIp(normalizedReq) || 'local'
+
+    // 1. Layered Rate Limiting on Auth & API routes (excluding /api/health probe)
+    if (pathname.startsWith('/api/auth/')) {
+      const rl = checkRateLimit('auth', clientIp)
+      if (!rl.allowed) {
+        return withSecurityHeaders(rateLimitResponse(rl), normalizedReq)
+      }
+    } else if (pathname.startsWith('/api/') && pathname !== '/api/health') {
+      const rl = checkRateLimit('api', clientIp)
+      if (!rl.allowed) {
+        return withSecurityHeaders(rateLimitResponse(rl), normalizedReq)
+      }
+    }
+
+    // 2. CSRF Origin & Fetch-Metadata enforcement on all mutating requests
+    const csrf = verifyCsrfRequest(normalizedReq)
+    if (!csrf.ok) {
+      return withSecurityHeaders(
+        Response.json(
+          { error: 'CSRF_FORBIDDEN', message: csrf.reason },
+          { status: 403 },
+        ),
+        normalizedReq,
+      )
+    }
+
+    // 3. Dispatch to TanStack Start & apply HTTP security headers
+    const response = await handler.fetch(normalizedReq)
+    return withSecurityHeaders(response, normalizedReq)
   },
 })

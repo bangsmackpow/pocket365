@@ -2,7 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { requireRole, requireSession } from '~/server/auth/guards'
+import { requireCapability, requireRole, requireSession } from '~/server/auth/guards'
 import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
 import { jobs } from '~/server/db/schema'
@@ -23,6 +23,7 @@ import {
   type FriendlyGraphError,
 } from '~/server/graph/signin-errors'
 import { getClientIp } from '~/server/http/proxy'
+import { enforceRateLimit } from '~/server/security/rate-limit'
 
 const mailboxDetailSchema = z.object({
   userId: z.string().min(1),
@@ -81,7 +82,7 @@ const updateAutoReplySchema = z.object({
 export const updateMailboxAutoReplyFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => updateAutoReplySchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'mailbox.update_autoreply')
+    const session = requireCapability('helpdesk.actions', undefined, 'mailbox.update_autoreply')
     const ipAddress = getClientIp(getRequest())
     const graph = getGraphClient()
 
@@ -195,7 +196,8 @@ const becSweepSchema = z.object({
 export const enqueueMailboxBecSweepFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => becSweepSchema.parse(input ?? {}))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'mailbox.bec_sweep')
+    const session = requireCapability('audit.sweep', undefined, 'mailbox.bec_sweep')
+    enforceRateLimit('heavy', session.oid)
     const job = enqueueJob({
       type: 'mailbox.bec_sweep',
       payload: {

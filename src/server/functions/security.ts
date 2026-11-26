@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { z } from 'zod'
-import { requireRole, requireSession } from '~/server/auth/guards'
+import { requireCapability, requireRole, requireSession } from '~/server/auth/guards'
 import { recordAuditLog } from '~/server/db/audit'
 import {
   getGraphClient,
@@ -19,6 +19,7 @@ import {
   type FriendlyGraphError,
 } from '~/server/graph/signin-errors'
 import { getClientIp } from '~/server/http/proxy'
+import { enforceRateLimit } from '~/server/security/rate-limit'
 
 const userIdInputSchema = z.object({
   userId: z.string().min(1),
@@ -53,7 +54,7 @@ const revokeSessionsSchema = z.object({
 export const revokeUserSessionsFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => revokeSessionsSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'user.revoke_sessions')
+    const session = requireCapability('helpdesk.actions', undefined, 'user.revoke_sessions')
     const ipAddress = getClientIp(getRequest())
     const graph = getGraphClient()
 
@@ -98,7 +99,7 @@ const resetPasswordSchema = z.object({
 export const resetUserPasswordFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => resetPasswordSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'user.reset_password')
+    const session = requireCapability('helpdesk.actions', undefined, 'user.reset_password')
     const ipAddress = getClientIp(getRequest())
     const graph = getGraphClient()
 
@@ -160,7 +161,7 @@ const deleteAuthMethodSchema = z.object({
 export const deleteUserAuthMethodFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => deleteAuthMethodSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'user.delete_auth_method')
+    const session = requireCapability('helpdesk.actions', undefined, 'user.delete_auth_method')
     const ipAddress = getClientIp(getRequest())
     const graph = getGraphClient()
 
@@ -215,7 +216,7 @@ const createTapSchema = z.object({
 export const createTemporaryAccessPassFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => createTapSchema.parse(input))
   .handler(async ({ data }) => {
-    const session = requireRole('admin', undefined, 'user.create_tap')
+    const session = requireCapability('helpdesk.actions', undefined, 'user.create_tap')
     const ipAddress = getClientIp(getRequest())
     const graph = getGraphClient()
 
@@ -279,6 +280,7 @@ export const enqueueUserOffboardingFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => offboardUserSchema.parse(input))
   .handler(async ({ data }) => {
     const session = requireRole('admin', undefined, 'user.offboard')
+    enforceRateLimit('heavy', session.oid)
     if (
       !data.disableAccount &&
       !data.revokeSessions &&

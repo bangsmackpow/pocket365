@@ -7,6 +7,7 @@ import {
   Crown,
   KeyRound,
   LayoutDashboard,
+  Lock,
   LogOut,
   Mail,
   Radar,
@@ -49,12 +50,21 @@ const NAV_ITEMS = [
   { to: '/cleanup', label: 'Stale & Guests', icon: UserMinus },
   { to: '/posture', label: 'Posture & Devices', icon: Radar },
   { to: '/alerts', label: 'Alerts', icon: Bell },
+  { to: '/security', label: 'Security & Sessions', icon: Lock },
   { to: '/audit', label: 'Audit & Jobs', icon: Activity },
 ] as const
 
+function formatRoleLabel(role: UserRole): string {
+  if (role === 'owner') return 'owner'
+  if (role === 'admin') return 'full-admin'
+  if (role === 'helpdesk') return 'helpdesk'
+  if (role === 'security_auditor') return 'auditor'
+  return 'read-only'
+}
+
 export function AppShell({ user, tenantIdHint, children }: AppShellProps) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const isAdmin = user.role === 'admin'
+  const isAdmin = user.role === 'admin' || user.role === 'owner'
 
   return (
     <div className="min-h-screen flex bg-slate-50 text-slate-900">
@@ -116,7 +126,7 @@ export function AppShell({ user, tenantIdHint, children }: AppShellProps) {
                 }`}
               >
                 <Shield className="h-3 w-3" />
-                {isAdmin ? 'full-admin' : 'read-only'}
+                {formatRoleLabel(user.role)}
               </span>
             </div>
             <div className="text-xs text-slate-400 truncate" title={user.upn}>

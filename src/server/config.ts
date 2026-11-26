@@ -10,8 +10,15 @@ export interface Pocket365Config {
   oidcClientId: string
   oidcClientSecret: string
   sessionSecret: string
+  dataEncryptionKey: string
   sessionTtlHours: number
+  sessionIdleTimeoutMinutes: number
+  allowPrivateWebhooks: boolean
+  trustedProxyHops: number
+  ownerEntries: string[]
   adminEntries: string[]
+  helpdeskEntries: string[]
+  auditorEntries: string[]
   viewerEntries: string[]
   graphClientId: string
   graphClientSecret: string
@@ -85,9 +92,22 @@ export function getConfig(): Pocket365Config {
   const oidcClientId = (env.OIDC_CLIENT_ID || '').trim()
   const oidcClientSecret = (env.OIDC_CLIENT_SECRET || '').trim()
   const sessionSecret = (env.SESSION_SECRET || '').trim()
+  const dataEncryptionKey = (env.DATA_ENCRYPTION_KEY || '').trim()
   const sessionTtlHours = parsePositiveInt(env.SESSION_TTL_HOURS, 12, 1, 720)
+  const sessionIdleTimeoutMinutes = parsePositiveInt(
+    env.SESSION_IDLE_TIMEOUT_MINUTES,
+    120,
+    5,
+    10080,
+  )
+  const allowPrivateWebhooks =
+    (env.ALLOW_PRIVATE_WEBHOOKS || '').trim().toLowerCase() === 'true'
+  const trustedProxyHops = parsePositiveInt(env.TRUSTED_PROXY_HOPS, 1, 0, 10)
 
+  const ownerEntries = parseCsvList(env.OWNER_OIDS_OR_GROUPS)
   const adminEntries = parseCsvList(env.ADMIN_OIDS_OR_GROUPS)
+  const helpdeskEntries = parseCsvList(env.HELPDESK_OIDS_OR_GROUPS)
+  const auditorEntries = parseCsvList(env.AUDITOR_OIDS_OR_GROUPS)
   const viewerEntries = parseCsvList(env.VIEWER_OIDS_OR_GROUPS)
 
   const graphClientId = (env.GRAPH_CLIENT_ID || oidcClientId).trim()
@@ -114,8 +134,15 @@ export function getConfig(): Pocket365Config {
     oidcClientId,
     oidcClientSecret,
     sessionSecret,
+    dataEncryptionKey,
     sessionTtlHours,
+    sessionIdleTimeoutMinutes,
+    allowPrivateWebhooks,
+    trustedProxyHops,
+    ownerEntries,
     adminEntries,
+    helpdeskEntries,
+    auditorEntries,
     viewerEntries,
     graphClientId,
     graphClientSecret,
@@ -145,7 +172,12 @@ export function getConfigReadiness(): ConfigReadiness {
       cfg.entraTenantId && cfg.oidcClientId && cfg.oidcClientSecret,
     ),
     sessionSecretConfigured: cfg.sessionSecret.length >= 32,
-    rbacConfigured: cfg.adminEntries.length > 0 || cfg.viewerEntries.length > 0,
+    rbacConfigured:
+      cfg.ownerEntries.length > 0 ||
+      cfg.adminEntries.length > 0 ||
+      cfg.helpdeskEntries.length > 0 ||
+      cfg.auditorEntries.length > 0 ||
+      cfg.viewerEntries.length > 0,
     graphConfigured: Boolean(
       cfg.entraTenantId && (hasCertAuth || hasSecretAuth),
     ),

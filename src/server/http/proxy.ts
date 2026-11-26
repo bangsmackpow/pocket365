@@ -17,8 +17,19 @@ export function getForwardedHost(request?: Request): string {
 
 export function getClientIp(request?: Request): string | null {
   if (!request) return null
-  const forwardedFor = firstHeaderValue(request.headers.get('x-forwarded-for'))
-  if (forwardedFor) return forwardedFor
+  const cfg = getConfig()
+  const xff = request.headers.get('x-forwarded-for')
+  if (xff && cfg.trustedProxyHops > 0) {
+    const hops = xff
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean)
+    if (hops.length > 0) {
+      // Take the right-most untrusted hop to prevent spoofed leading X-Forwarded-For values
+      const targetIndex = Math.max(0, hops.length - cfg.trustedProxyHops)
+      return hops[targetIndex] ?? hops[0] ?? null
+    }
+  }
   const realIp = firstHeaderValue(request.headers.get('x-real-ip'))
   if (realIp) return realIp
   return null
