@@ -8,7 +8,7 @@
     "enabled": true
   },
   "vars": {
-    "DEPLOYMENT_MODE": "self_hosted",
+    "DEPLOYMENT_MODE": "saas",
     "LICENSE_ENFORCEMENT": "off"
   },
   "d1_databases": [
