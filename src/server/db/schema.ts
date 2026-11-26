@@ -317,6 +317,24 @@ export const tenantAccess = sqliteTable(
   ],
 )
 
+export const ignoredActionItems = sqliteTable(
+  'ignored_action_items',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().default('default'),
+    actionItemId: text('action_item_id').notNull(),
+    reason: text('reason'),
+    ignoredBy: text('ignored_by').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_ignored_action_items_org').on(
+      table.organizationId,
+      table.actionItemId,
+    ),
+  ],
+)
+
 export type OrganizationRow = typeof organizations.$inferSelect
 export type SessionRow = typeof sessions.$inferSelect
 export type AuditLogRow = typeof auditLogs.$inferSelect
@@ -330,3 +348,4 @@ export type OnboardingTemplateRow = typeof onboardingTemplates.$inferSelect
 export type LicenseStateRow = typeof licenseState.$inferSelect
 export type ManagedTenantRow = typeof managedTenants.$inferSelect
 export type TenantAccessRow = typeof tenantAccess.$inferSelect
+export type IgnoredActionItemRow = typeof ignoredActionItems.$inferSelect

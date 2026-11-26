@@ -5,6 +5,8 @@ import {
   getConfigReadiness,
   type ConfigReadiness,
 } from '~/server/config'
+
+export type { ConfigReadiness } from '~/server/config'
 import { getDb } from '~/server/db'
 import { appSettings } from '~/server/db/schema'
 import { GraphTokenProvider } from '~/server/graph/auth'

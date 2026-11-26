@@ -48,6 +48,7 @@ function CisBenchmarksPage() {
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [categoryFilter, setCategoryFilter] = useState<CisCategory | 'all'>('all')
+  const [frameworkView, setFrameworkView] = useState<'both' | 'cis' | 'nist'>('both')
   const [banner, setBanner] = useState<{
     type: 'success' | 'error'
     text: string
@@ -112,10 +113,11 @@ function CisBenchmarksPage() {
   const exportCsv = () => {
     const checks = scanQuery.data?.checks ?? []
     const lines = [
-      'CIS_Ref,Category,Severity,Status,Title,Observed,Expected',
+      'CIS_Ref,NIST_Ref,Category,Severity,Status,Title,Observed,Expected',
       ...checks.map((c) =>
         [
           c.cisRef,
+          c.nistRef || '',
           c.category,
           c.severity,
           c.status,
@@ -163,14 +165,45 @@ function CisBenchmarksPage() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            CIS Microsoft 365 Benchmarks
+            CIS & NIST Security Posture Benchmarks
           </h1>
           <p className="text-sm text-slate-600">
-            Live tenant hardening posture with step-by-step remediation guides
-            and audited 1-click fixes for Graph-remediable controls.
+            Live tenant hardening posture with dual CIS v3.0 / v4.0 and NIST SP 800-171 / CSF cross-mapping,
+            step-by-step remediation guides, and audited 1-click fixes.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* Framework View Toggle */}
+          <div className="inline-flex items-center rounded-xl bg-slate-100 p-1 text-xs font-semibold text-slate-600">
+            <button
+              type="button"
+              onClick={() => setFrameworkView('both')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                frameworkView === 'both' ? 'bg-white text-slate-900 shadow-xs' : 'hover:text-slate-900'
+              }`}
+            >
+              Unified CIS + NIST
+            </button>
+            <button
+              type="button"
+              onClick={() => setFrameworkView('cis')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                frameworkView === 'cis' ? 'bg-white text-slate-900 shadow-xs' : 'hover:text-slate-900'
+              }`}
+            >
+              CIS Only
+            </button>
+            <button
+              type="button"
+              onClick={() => setFrameworkView('nist')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                frameworkView === 'nist' ? 'bg-white text-slate-900 shadow-xs' : 'hover:text-slate-900'
+              }`}
+            >
+              NIST SP 800-171 Only
+            </button>
+          </div>
+
           {isAdmin && (
             <button
               type="button"
@@ -358,6 +391,7 @@ function CisBenchmarksPage() {
               key={check.id}
               check={check}
               isAdmin={isAdmin}
+              frameworkView={frameworkView}
               isFixing={
                 remediateMutation.isPending &&
                 activeRemediation === check.remediationId
@@ -374,11 +408,13 @@ function CisBenchmarksPage() {
 function CisCheckCard({
   check,
   isAdmin,
+  frameworkView,
   isFixing,
   onFix,
 }: {
   check: CisCheckResult
   isAdmin: boolean
+  frameworkView: 'both' | 'cis' | 'nist'
   isFixing: boolean
   onFix: (id: CisRemediationId) => void
 }) {
@@ -403,9 +439,16 @@ function CisCheckCard({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1 min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded">
-              {check.cisRef}
-            </span>
+            {(frameworkView === 'both' || frameworkView === 'cis') && (
+              <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded">
+                {check.cisRef}
+              </span>
+            )}
+            {(frameworkView === 'both' || frameworkView === 'nist') && check.nistRef && (
+              <span className="font-mono text-xs font-bold text-slate-700 bg-slate-100 border border-slate-300 px-2 py-0.5 rounded">
+                {check.nistRef}
+              </span>
+            )}
             <span
               className={`px-2 py-0.5 rounded text-[11px] font-semibold uppercase ${severityStyles}`}
             >

@@ -21,6 +21,7 @@ import {
   UserPlus,
   Users,
   UsersRound,
+  Wrench,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { UserRole } from '~/server/db/schema'
@@ -68,6 +69,7 @@ const NAV_ITEMS = [
   { to: '/security', label: 'Security & Sessions', icon: Lock },
   { to: '/billing', label: 'Plan & Licensing', icon: CreditCard },
   { to: '/audit', label: 'Audit & Jobs', icon: Activity },
+  { to: '/admin', label: 'Admin & System', icon: Wrench },
 ] as const
 
 function formatRoleLabel(role: UserRole): string {

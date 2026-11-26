@@ -126,5 +126,6 @@ export async function collectCisScan(managedTenantId?: string) {
     scannedAt: new Date().toISOString(),
     checks,
     summary,
+    snapshot,
   }
 }

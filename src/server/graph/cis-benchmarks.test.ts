@@ -87,6 +87,8 @@ describe('CIS Microsoft 365 Benchmarks Evaluator', () => {
     )
     expect(byId.get('global_admin_count')?.status).toBe('fail')
     expect(byId.get('admin_mfa')?.status).toBe('fail')
+    expect(byId.get('security_defaults')?.nistRef).toContain('NIST AC.L2-3.1.1')
+    expect(byId.get('admin_mfa')?.nistRef).toContain('NIST IA.L2-3.5.3')
   })
 
   it('scores 100% pass for a hardened tenant configuration', () => {

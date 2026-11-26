@@ -42,6 +42,8 @@ export type CisRemediationId =
 export interface CisCheckResult {
   id: string
   cisRef: string
+  nistRef?: string
+  nistTitle?: string
   title: string
   category: CisCategory
   severity: CisSeverity
@@ -74,6 +76,116 @@ export interface CisTenantSnapshot {
   sharePointSettingsError?: string | null
   authMethodsPolicy?: GraphAuthMethodsPolicy | null
   authMethodsPolicyError?: string | null
+}
+
+export const NIST_MAPPING_BY_ID: Record<
+  string,
+  { nistRef: string; nistTitle: string }
+> = {
+  security_defaults: {
+    nistRef: 'NIST AC.L2-3.1.1 / CSF PR.AA-01',
+    nistTitle: 'Enforce Multi-Factor Authentication for System Access',
+  },
+  admin_mfa: {
+    nistRef: 'NIST IA.L2-3.5.3 / CSF PR.AA-03',
+    nistTitle: 'Multifactor Authentication for Privileged Access',
+  },
+  all_users_mfa: {
+    nistRef: 'NIST IA.L2-3.5.3 / CSF PR.AA-01',
+    nistTitle: 'Multifactor Authentication for All Organizational Users',
+  },
+  global_admin_count: {
+    nistRef: 'NIST AC.L2-3.1.5 / CSF PR.AA-05',
+    nistTitle: 'Principle of Least Privilege for Administrative Accounts',
+  },
+  user_app_consent: {
+    nistRef: 'NIST AC.L2-3.1.2 / CSF PR.AC-04',
+    nistTitle: 'Limit Access by External Applications to Organizational Data',
+  },
+  user_app_registration: {
+    nistRef: 'NIST CM.L2-3.4.5 / CSF PR.PS-02',
+    nistTitle: 'Access Restrictions for Software and Application Registration',
+  },
+  user_tenant_creation: {
+    nistRef: 'NIST AC.L2-3.1.1 / CSF PR.AC-01',
+    nistTitle: 'Limit Organizational Boundary Crossing & Tenant Sprawl',
+  },
+  user_security_groups: {
+    nistRef: 'NIST AC.L2-3.1.2 / CSF PR.AA-05',
+    nistTitle: 'Authorized Group Creation and Membership Management',
+  },
+  block_msol_powershell: {
+    nistRef: 'NIST AC.L2-3.1.12 / CSF PR.AC-03',
+    nistTitle: 'Control and Restrict Legacy Remote Management Protocols',
+  },
+  guest_access_restriction: {
+    nistRef: 'NIST AC.L2-3.1.20 / CSF PR.AA-06',
+    nistTitle: 'Limit External and Guest Access to Least Privilege',
+  },
+  guest_invite_restriction: {
+    nistRef: 'NIST AC.L2-3.1.20 / CSF PR.AA-06',
+    nistTitle: 'Authorize External Sharing and Guest Collaborators',
+  },
+  email_verified_join: {
+    nistRef: 'NIST IA.L2-3.5.1 / CSF PR.AC-01',
+    nistTitle: 'Authenticate and Control Directory Account Provisioning',
+  },
+  authorization_policy_unavailable: {
+    nistRef: 'NIST AC.L2-3.1.1 / CSF PR.AC-01',
+    nistTitle: 'Authorization Policy Inspection',
+  },
+  admin_consent_workflow: {
+    nistRef: 'NIST AC.L2-3.1.2 / CSF PR.AC-04',
+    nistTitle: 'Formal Access Approval Workflow for Third-Party Applications',
+  },
+  password_never_expires: {
+    nistRef: 'NIST IA.L2-3.5.7 / CSF PR.AC-01',
+    nistTitle: 'Password Complexity and Lifecycle Aligned with MFA (SP 800-63B)',
+  },
+  dns_spf: {
+    nistRef: 'NIST SC.L2-3.13.1 / CSF PR.DS-02',
+    nistTitle: 'Domain Sender Policy Framework (SPF) Verification',
+  },
+  dns_dkim: {
+    nistRef: 'NIST SC.L2-3.13.1 / CSF PR.DS-02',
+    nistTitle: 'Cryptographic Message Integrity via DKIM Signatures',
+  },
+  dns_dmarc: {
+    nistRef: 'NIST SC.L2-3.13.1 / CSF PR.DS-02',
+    nistTitle: 'Domain Message Authentication, Reporting & Conformance (DMARC)',
+  },
+  auth_ms_authenticator_context: {
+    nistRef: 'NIST IA.L2-3.5.3 / CSF PR.AA-03',
+    nistTitle: 'Context-Rich & Number-Matching MFA Prompt Hardening',
+  },
+  auth_disable_sms: {
+    nistRef: 'NIST IA.L2-3.5.3 / CSF PR.AA-01',
+    nistTitle: 'Deprecate Weak Out-of-Band SMS Authentication (SP 800-63B)',
+  },
+  auth_disable_voice: {
+    nistRef: 'NIST IA.L2-3.5.3 / CSF PR.AA-01',
+    nistTitle: 'Deprecate Weak PSTN Voice Authentication (SP 800-63B)',
+  },
+  auth_methods_unavailable: {
+    nistRef: 'NIST IA.L2-3.5.3 / CSF PR.AA-01',
+    nistTitle: 'Authentication Methods Policy Inspection',
+  },
+  sp_external_resharing: {
+    nistRef: 'NIST AC.L2-3.1.20 / CSF PR.DS-05',
+    nistTitle: 'Prevent Unauthorized Data Resharing by External Parties',
+  },
+  sp_legacy_auth: {
+    nistRef: 'NIST AC.L2-3.1.12 / CSF PR.AC-03',
+    nistTitle: 'Prohibit Unencrypted / Legacy Authentication in Portals',
+  },
+  sp_idle_signout: {
+    nistRef: 'NIST AC.L2-3.1.10 / CSF PR.AC-05',
+    nistTitle: 'Enforce Automatic Session Termination & Inactivity Timeouts',
+  },
+  sp_settings_unavailable: {
+    nistRef: 'NIST AC.L2-3.1.20 / CSF PR.DS-05',
+    nistTitle: 'SharePoint & OneDrive Security Inspection',
+  },
 }
 
 export const GUEST_ROLE_IDS = {
@@ -826,7 +938,14 @@ export function evaluateCisBenchmarks(
     })
   }
 
-  return checks
+  return checks.map((c) => {
+    const nist = NIST_MAPPING_BY_ID[c.id]
+    return {
+      ...c,
+      nistRef: nist?.nistRef ?? 'NIST SP 800-171',
+      nistTitle: nist?.nistTitle ?? c.title,
+    }
+  })
 }
 
 export function summarizeCisChecks(checks: CisCheckResult[]) {
