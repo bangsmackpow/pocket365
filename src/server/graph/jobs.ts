@@ -5,6 +5,10 @@ import { recordAuditLog } from '~/server/db/audit'
 import { jobs, type JobRow, type JobStatus, type UserRole } from '~/server/db/schema'
 import { getRuntimeSettings } from '~/server/db/settings'
 import { getGraphClient, type MicrosoftGraphClient } from './client'
+import {
+  analyzeInboxRuleRisk,
+  type InboxRuleRiskAnalysis,
+} from './insights-helpers'
 
 export type JobType =
   | 'user.bulk_toggle_enabled'
@@ -12,6 +16,31 @@ export type JobType =
   | 'group.bulk_add_members'
   | 'group.bulk_remove_members'
   | 'user.offboard'
+  | 'mailbox.bec_sweep'
+
+export interface MailboxBecSweepPayload {
+  onlyLicensed: boolean
+  maxUsers: number
+}
+
+export interface MailboxBecFinding {
+  userId: string
+  displayName: string
+  userPrincipalName: string
+  rule: InboxRuleRiskAnalysis
+}
+
+export interface MailboxBecSweepResult {
+  total: number
+  succeeded: number
+  failed: number
+  scannedUsers: number
+  totalRulesInspected: number
+  highRiskCount: number
+  mediumRiskCount: number
+  findings: MailboxBecFinding[]
+  items: BulkItemOutcome[]
+}
 
 export interface BulkToggleUsersPayload {
   userIds: string[]
@@ -46,6 +75,7 @@ export type JobPayload =
   | BulkAssignLicensePayload
   | BulkGroupMembersPayload
   | UserOffboardPayload
+  | MailboxBecSweepPayload
 
 export function generateStrongPassword(length = 24): string {
   const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
@@ -224,7 +254,7 @@ async function executeJob(
   job: JobRow,
   graphClient: MicrosoftGraphClient,
   delayMs: number,
-): Promise<BulkJobResult> {
+): Promise<BulkJobResult | MailboxBecSweepResult> {
   const items: BulkItemOutcome[] = []
 
   const runItem = async (targetId: string, fn: () => Promise<void>) => {
@@ -368,6 +398,66 @@ async function executeJob(
       }
 
       break
+    }
+    case 'mailbox.bec_sweep': {
+      const payload = JSON.parse(job.payloadJson) as MailboxBecSweepPayload
+      const page = await graphClient.listUsers({
+        top: Math.min(Math.max(payload.maxUsers || 100, 1), 250),
+      })
+      const targets = page.items.filter((u) => {
+        if (u.accountEnabled === false) return false
+        if (payload.onlyLicensed && u.assignedLicenses.length === 0) {
+          return false
+        }
+        return true
+      })
+
+      const findings: MailboxBecFinding[] = []
+      let totalRulesInspected = 0
+
+      for (const u of targets) {
+        try {
+          const rules = await graphClient.listUserInboxRules(u.id)
+          totalRulesInspected += rules.length
+          for (const rawRule of rules) {
+            const analyzed = analyzeInboxRuleRisk(rawRule)
+            if (analyzed.riskLevel === 'high' || analyzed.riskLevel === 'medium') {
+              findings.push({
+                userId: u.id,
+                displayName: u.displayName,
+                userPrincipalName: u.userPrincipalName,
+                rule: analyzed,
+              })
+            }
+          }
+          items.push({ targetId: u.userPrincipalName, ok: true })
+        } catch (err) {
+          // Users without Exchange mailbox return 404/MailboxNotEnabledForRESTAPI; record cleanly
+          items.push({
+            targetId: u.userPrincipalName,
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+        if (delayMs > 0) {
+          await sleep(delayMs)
+        }
+      }
+
+      const succeeded = items.filter((i) => i.ok).length
+      const failed = items.length - succeeded
+      return {
+        total: items.length,
+        succeeded,
+        failed,
+        scannedUsers: targets.length,
+        totalRulesInspected,
+        highRiskCount: findings.filter((f) => f.rule.riskLevel === 'high').length,
+        mediumRiskCount: findings.filter((f) => f.rule.riskLevel === 'medium')
+          .length,
+        findings,
+        items,
+      }
     }
     default:
       throw new Error(`Unsupported job type: ${job.type}`)

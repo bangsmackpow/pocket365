@@ -1,8 +1,11 @@
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
+import { desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireRole, requireSession } from '~/server/auth/guards'
+import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
+import { jobs } from '~/server/db/schema'
 import {
   getGraphClient,
   type GraphMailboxSettings,
@@ -11,6 +14,10 @@ import {
   analyzeInboxRuleRisk,
   type InboxRuleRiskAnalysis,
 } from '~/server/graph/insights-helpers'
+import {
+  enqueueJob,
+  type MailboxBecSweepResult,
+} from '~/server/graph/jobs'
 import {
   classifyGraphError,
   type FriendlyGraphError,
@@ -179,3 +186,63 @@ export const deleteInboxRuleFn = createServerFn({ method: 'POST' })
       throw err
     }
   })
+
+const becSweepSchema = z.object({
+  onlyLicensed: z.boolean().default(true),
+  maxUsers: z.number().int().min(10).max(250).default(100),
+})
+
+export const enqueueMailboxBecSweepFn = createServerFn({ method: 'POST' })
+  .validator((input: unknown) => becSweepSchema.parse(input ?? {}))
+  .handler(async ({ data }) => {
+    const session = requireRole('admin', undefined, 'mailbox.bec_sweep')
+    const job = enqueueJob({
+      type: 'mailbox.bec_sweep',
+      payload: {
+        onlyLicensed: data.onlyLicensed,
+        maxUsers: data.maxUsers,
+      },
+      actor: { oid: session.oid, upn: session.upn, role: session.role },
+      ipAddress: getClientIp(getRequest()),
+    })
+    return { job }
+  })
+
+export const getLatestBecSweepFn = createServerFn({ method: 'GET' }).handler(
+  async () => {
+    requireSession()
+    const db = getDb()
+    const latest = db
+      .select()
+      .from(jobs)
+      .where(eq(jobs.type, 'mailbox.bec_sweep'))
+      .orderBy(desc(jobs.createdAt))
+      .limit(1)
+      .get()
+
+    if (!latest) {
+      return { job: null, result: null as MailboxBecSweepResult | null }
+    }
+
+    let result: MailboxBecSweepResult | null = null
+    if (latest.resultJson) {
+      try {
+        result = JSON.parse(latest.resultJson) as MailboxBecSweepResult
+      } catch {
+        result = null
+      }
+    }
+
+    return {
+      job: {
+        id: latest.id,
+        status: latest.status,
+        actorUpn: latest.actorUpn,
+        createdAt: latest.createdAt,
+        completedAt: latest.completedAt,
+        error: latest.error,
+      },
+      result,
+    }
+  },
+)

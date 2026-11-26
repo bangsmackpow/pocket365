@@ -72,7 +72,7 @@ describe('CIS Microsoft 365 Benchmarks Evaluator', () => {
     const summary = summarizeCisChecks(checks)
 
     expect(summary.failed).toBeGreaterThanOrEqual(10)
-    expect(summary.oneClickFixable).toBe(9)
+    expect(summary.oneClickFixable).toBe(10)
     expect(summary.scorePct).toBe(0)
 
     const byId = new Map(checks.map((c) => [c.id, c]))
@@ -99,6 +99,7 @@ describe('CIS Microsoft 365 Benchmarks Evaluator', () => {
         allowInvitesFrom: 'adminsAndGuestInviters',
         guestUserRoleId: GUEST_ROLE_IDS.RESTRICTED,
         blockMsolPowerShell: true,
+        allowEmailVerifiedUsersToJoinOrganization: false,
         defaultUserRolePermissions: {
           allowedToCreateApps: false,
           allowedToCreateTenants: false,

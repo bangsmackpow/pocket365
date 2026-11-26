@@ -1,11 +1,14 @@
 import type {
   GraphAdminConsentRequestPolicy,
+  GraphAuthMethodsPolicy,
   GraphAuthorizationPolicy,
   GraphDirectoryRole,
   GraphDomain,
   GraphSecurityDefaultsPolicy,
+  GraphSharePointSettings,
   GraphUserRegistrationDetail,
 } from './client'
+import type { DomainEmailAuthAudit } from './dns-email-auth'
 import { isWeakMfaOnly } from './mfa-helpers'
 
 export type CisStatus = 'pass' | 'fail' | 'warn' | 'unavailable'
@@ -15,6 +18,8 @@ export type CisCategory =
   | 'Privileged Access'
   | 'Apps & Consent'
   | 'Guests & Collaboration'
+  | 'Email & DNS Security'
+  | 'SharePoint & OneDrive'
 
 export type CisRemediationId =
   | 'enable_security_defaults'
@@ -26,6 +31,13 @@ export type CisRemediationId =
   | 'restrict_guest_invites'
   | 'block_msol_powershell'
   | 'enable_admin_consent_workflow'
+  | 'disable_email_verified_join'
+  | 'disable_sms_auth_method'
+  | 'disable_voice_auth_method'
+  | 'sp_disable_anonymous_links'
+  | 'sp_disable_external_resharing'
+  | 'sp_block_legacy_auth'
+  | 'sp_enable_idle_signout'
 
 export interface CisCheckResult {
   id: string
@@ -57,6 +69,11 @@ export interface CisTenantSnapshot {
   mfaRegistrationsError?: string | null
   domains: GraphDomain[] | null
   domainsError?: string | null
+  emailAuthAudits?: DomainEmailAuthAudit[] | null
+  sharePointSettings?: GraphSharePointSettings | null
+  sharePointSettingsError?: string | null
+  authMethodsPolicy?: GraphAuthMethodsPolicy | null
+  authMethodsPolicyError?: string | null
 }
 
 export const GUEST_ROLE_IDS = {
@@ -422,6 +439,28 @@ export function evaluateCisBenchmarks(
       remediationLabel: '1-Click: Restrict Guest Invites to Admins',
       requiredPermissions: ['Policy.Read.All', 'Policy.ReadWrite.Authorization'],
     })
+
+    // 11b. CIS 5.1.2.7 — Block self-service email-verified tenant join
+    const allowSelfJoin =
+      authPol.allowEmailVerifiedUsersToJoinOrganization !== false
+    checks.push({
+      id: 'email_verified_join',
+      cisRef: 'CIS 5.1.2.7',
+      title: 'Block self-service email-verified sign-up to join tenant',
+      category: 'Guests & Collaboration',
+      severity: 'medium',
+      status: !allowSelfJoin ? 'pass' : 'fail',
+      currentValue: allowSelfJoin
+        ? 'Allowed (allowEmailVerifiedUsersToJoinOrganization = true)'
+        : 'Blocked (allowEmailVerifiedUsersToJoinOrganization = false)',
+      expectedValue: 'allowEmailVerifiedUsersToJoinOrganization = false',
+      howToResolve: [
+        'Disable viral/self-service sign-ups so unapproved users cannot create ad-hoc accounts in your tenant using a verified domain email.',
+      ],
+      remediationId: allowSelfJoin ? 'disable_email_verified_join' : undefined,
+      remediationLabel: '1-Click: Block Self-Service Join',
+      requiredPermissions: ['Policy.Read.All', 'Policy.ReadWrite.Authorization'],
+    })
   } else {
     const errText = snapshot.authorizationPolicyError || 'Permission required'
     checks.push({
@@ -505,6 +544,285 @@ export function evaluateCisBenchmarks(
         'Check "Set passwords to never expire (recommended)" and Save.',
       ],
       requiredPermissions: ['Organization.Read.All'],
+    })
+  }
+
+  // 14-16. CIS Section 2 — Email Authentication & Anti-Spoofing (SPF / DKIM / DMARC via Live DNS)
+  const emailAudits = snapshot.emailAuthAudits ?? []
+  if (emailAudits.length > 0) {
+    const spfFailed = emailAudits.filter((a) => a.spfStatus === 'fail')
+    const spfWarned = emailAudits.filter((a) => a.spfStatus === 'warn')
+    checks.push({
+      id: 'dns_spf',
+      cisRef: 'CIS 2.1.6',
+      title: 'Publish strict SPF DNS records for all verified custom domains',
+      category: 'Email & DNS Security',
+      severity: 'high',
+      status:
+        spfFailed.length > 0 ? 'fail' : spfWarned.length > 0 ? 'warn' : 'pass',
+      currentValue: emailAudits
+        .map((a) => `${a.domain}: ${a.spfRecord ? a.spfRecord : 'MISSING'}`)
+        .join(' | '),
+      expectedValue:
+        'TXT v=spf1 include:spf.protection.outlook.com -all (or ~all) on every verified domain',
+      howToResolve: [
+        'In your DNS provider, publish a TXT record on the root (@) of each custom domain:',
+        'v=spf1 include:spf.protection.outlook.com -all',
+        'Include any authorized third-party senders (e.g., CRM/transactional mailers) before -all and stay under 10 DNS lookups.',
+      ],
+      requiredPermissions: ['Organization.Read.All'],
+    })
+
+    const dkimFailed = emailAudits.filter((a) => a.dkimStatus === 'fail')
+    const dkimWarned = emailAudits.filter((a) => a.dkimStatus === 'warn')
+    checks.push({
+      id: 'dns_dkim',
+      cisRef: 'CIS 2.1.7',
+      title: 'Enable DKIM signing (selector1 & selector2 CNAMEs) for custom domains',
+      category: 'Email & DNS Security',
+      severity: 'high',
+      status:
+        dkimFailed.length > 0 ? 'fail' : dkimWarned.length > 0 ? 'warn' : 'pass',
+      currentValue: emailAudits
+        .map(
+          (a) =>
+            `${a.domain}: sel1=${a.dkimSelector1 ? 'OK' : 'MISSING'}, sel2=${a.dkimSelector2 ? 'OK' : 'MISSING'}`,
+        )
+        .join(' | '),
+      expectedValue:
+        'Both selector1._domainkey and selector2._domainkey CNAME records published and DKIM enabled in Defender portal',
+      howToResolve: [
+        'Open Microsoft 365 Defender portal → Email & collaboration → Policies & rules → Threat policies → Email authentication settings → DKIM.',
+        'Select each custom domain → click "Create DKIM keys" → publish the two CNAME records (selector1._domainkey & selector2._domainkey) in DNS → toggle Enable.',
+      ],
+      requiredPermissions: ['Organization.Read.All'],
+    })
+
+    const dmarcFailed = emailAudits.filter((a) => a.dmarcStatus === 'fail')
+    const dmarcWarned = emailAudits.filter((a) => a.dmarcStatus === 'warn')
+    checks.push({
+      id: 'dns_dmarc',
+      cisRef: 'CIS 2.1.8',
+      title: 'Enforce DMARC (p=quarantine or p=reject) for all custom domains',
+      category: 'Email & DNS Security',
+      severity: 'critical',
+      status:
+        dmarcFailed.length > 0
+          ? 'fail'
+          : dmarcWarned.length > 0
+            ? 'warn'
+            : 'pass',
+      currentValue: emailAudits
+        .map((a) => `${a.domain}: ${a.dmarcRecord ? `p=${a.dmarcPolicy}` : 'MISSING'}`)
+        .join(' | '),
+      expectedValue:
+        '_dmarc.<domain> TXT record with p=quarantine or p=reject (not p=none)',
+      howToResolve: [
+        'Publish a TXT record at _dmarc.<your-domain> after SPF & DKIM pass:',
+        'v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc@<your-domain>',
+        'Monitor aggregate reports, then tighten to p=reject.',
+      ],
+      requiredPermissions: ['Organization.Read.All'],
+    })
+  }
+
+  // 17-19. CIS Section 5.2.3 — Authentication Methods Policy
+  if (snapshot.authMethodsPolicy?.authenticationMethodConfigurations) {
+    const configs =
+      snapshot.authMethodsPolicy.authenticationMethodConfigurations
+    const findConfig = (id: string) =>
+      configs.find((c) => c.id.toLowerCase() === id.toLowerCase())
+
+    const msAuth = findConfig('MicrosoftAuthenticator')
+    const sms = findConfig('Sms')
+    const voice = findConfig('Voice')
+
+    if (msAuth) {
+      const appCtx =
+        msAuth.featureSettings?.displayAppInformationRequiredState?.state ===
+        'enabled'
+      const locCtx =
+        msAuth.featureSettings?.displayLocationInformationRequiredState?.state ===
+        'enabled'
+      const authReady = msAuth.state === 'enabled' && appCtx && locCtx
+      checks.push({
+        id: 'auth_ms_authenticator_context',
+        cisRef: 'CIS 5.2.3.1',
+        title: 'Show application & location context in Microsoft Authenticator prompts',
+        category: 'Identity & MFA',
+        severity: 'high',
+        status: authReady ? 'pass' : msAuth.state === 'enabled' ? 'warn' : 'fail',
+        currentValue: `state=${msAuth.state}, appContext=${appCtx ? 'enabled' : 'off'}, locationContext=${locCtx ? 'enabled' : 'off'}`,
+        expectedValue:
+          'Microsoft Authenticator enabled with application name and geographic location shown on MFA prompts',
+        howToResolve: [
+          'Open Entra admin center → Protection → Authentication methods → Policies → Microsoft Authenticator → Configure.',
+          'Enable "Show application name in push and passwordless notifications" and "Show geographic location in push and passwordless notifications" for All users.',
+        ],
+        requiredPermissions: ['Policy.Read.All'],
+      })
+    }
+
+    if (sms) {
+      const smsDisabled = sms.state === 'disabled'
+      checks.push({
+        id: 'auth_disable_sms',
+        cisRef: 'CIS 5.2.3.2',
+        title: 'Disable weak SMS authentication method (phishing / SIM-swap risk)',
+        category: 'Identity & MFA',
+        severity: 'medium',
+        status: smsDisabled ? 'pass' : 'warn',
+        currentValue: `SMS authentication method state = ${sms.state}`,
+        expectedValue: 'SMS state = disabled (use Microsoft Authenticator or FIDO2 instead)',
+        howToResolve: [
+          'Verify users have migrated off SMS using Pocket365 → MFA Coverage → Weak MFA (SMS/Voice).',
+          'Open Entra admin center → Protection → Authentication methods → SMS → set Enable to Off.',
+        ],
+        remediationId: !smsDisabled ? 'disable_sms_auth_method' : undefined,
+        remediationLabel: '1-Click: Disable SMS Auth Method',
+        requiredPermissions: ['Policy.ReadWrite.AuthenticationMethod'],
+      })
+    }
+
+    if (voice) {
+      const voiceDisabled = voice.state === 'disabled'
+      checks.push({
+        id: 'auth_disable_voice',
+        cisRef: 'CIS 5.2.3.3',
+        title: 'Disable weak Voice Call authentication method',
+        category: 'Identity & MFA',
+        severity: 'medium',
+        status: voiceDisabled ? 'pass' : 'warn',
+        currentValue: `Voice authentication method state = ${voice.state}`,
+        expectedValue: 'Voice state = disabled',
+        howToResolve: [
+          'Ensure users have strong MFA registered, then open Entra admin center → Protection → Authentication methods → Voice call → disable.',
+        ],
+        remediationId: !voiceDisabled ? 'disable_voice_auth_method' : undefined,
+        remediationLabel: '1-Click: Disable Voice Auth Method',
+        requiredPermissions: ['Policy.ReadWrite.AuthenticationMethod'],
+      })
+    }
+  } else if (snapshot.authMethodsPolicyError) {
+    checks.push({
+      id: 'auth_methods_unavailable',
+      cisRef: 'CIS 5.2.3.x',
+      title: 'Authentication Methods Policy (Authenticator Context, SMS/Voice Hardening)',
+      category: 'Identity & MFA',
+      severity: 'medium',
+      status: 'unavailable',
+      currentValue: snapshot.authMethodsPolicyError,
+      expectedValue: 'Policy.Read.All + Policy.ReadWrite.AuthenticationMethod',
+      howToResolve: [
+        'Grant Policy.Read.All and Policy.ReadWrite.AuthenticationMethod in Entra ID.',
+      ],
+      requiredPermissions: [
+        'Policy.Read.All',
+        'Policy.ReadWrite.AuthenticationMethod',
+      ],
+    })
+  }
+
+  // 20-23. CIS Section 7 — SharePoint & OneDrive Hardening
+  const sp = snapshot.sharePointSettings
+  if (sp) {
+    const anonAllowed =
+      sp.sharingCapability === 'externalUserAndGuestSharing'
+    checks.push({
+      id: 'sp_anonymous_links',
+      cisRef: 'CIS 7.2.1',
+      title: 'Disable anonymous "Anyone" sharing links in SharePoint & OneDrive',
+      category: 'SharePoint & OneDrive',
+      severity: 'high',
+      status: !anonAllowed ? 'pass' : 'fail',
+      currentValue: `sharingCapability = ${sp.sharingCapability || 'unknown'}`,
+      expectedValue:
+        'externalUserSharingOnly, existingExternalUserSharingOnly, or disabled (no unauthenticated Anyone links)',
+      howToResolve: [
+        'Open SharePoint admin center → Policies → Sharing.',
+        'Drag the SharePoint & OneDrive sliders down from "Anyone" to "New and existing guests" (or stricter) and Save.',
+      ],
+      remediationId: anonAllowed ? 'sp_disable_anonymous_links' : undefined,
+      remediationLabel: '1-Click: Disable Anonymous Sharing Links',
+      requiredPermissions: ['SharePointTenantSettings.ReadWrite.All'],
+    })
+
+    const externalReshare = sp.isResharingByExternalUsersEnabled !== false
+    checks.push({
+      id: 'sp_external_resharing',
+      cisRef: 'CIS 7.2.2',
+      title: 'Prevent external guests from resharing SharePoint items they do not own',
+      category: 'SharePoint & OneDrive',
+      severity: 'medium',
+      status: !externalReshare ? 'pass' : 'fail',
+      currentValue: externalReshare
+        ? 'Allowed (isResharingByExternalUsersEnabled = true)'
+        : 'Blocked (isResharingByExternalUsersEnabled = false)',
+      expectedValue: 'isResharingByExternalUsersEnabled = false',
+      howToResolve: [
+        'Open SharePoint admin center → Policies → Sharing → More external sharing settings.',
+        'Uncheck "Allow guests to share items they don\'t own" and Save.',
+      ],
+      remediationId: externalReshare ? 'sp_disable_external_resharing' : undefined,
+      remediationLabel: '1-Click: Block Guest Resharing',
+      requiredPermissions: ['SharePointTenantSettings.ReadWrite.All'],
+    })
+
+    const spLegacy = sp.isLegacyAuthProtocolsEnabled !== false
+    checks.push({
+      id: 'sp_legacy_auth',
+      cisRef: 'CIS 7.2.3',
+      title: 'Block legacy authentication protocols in SharePoint Online',
+      category: 'SharePoint & OneDrive',
+      severity: 'high',
+      status: !spLegacy ? 'pass' : 'fail',
+      currentValue: spLegacy
+        ? 'Legacy auth enabled (isLegacyAuthProtocolsEnabled = true)'
+        : 'Blocked (isLegacyAuthProtocolsEnabled = false)',
+      expectedValue: 'isLegacyAuthProtocolsEnabled = false',
+      howToResolve: [
+        'Open SharePoint admin center → Policies → Access control → Apps that don\'t use modern authentication.',
+        'Select "Block access" and Save.',
+      ],
+      remediationId: spLegacy ? 'sp_block_legacy_auth' : undefined,
+      remediationLabel: '1-Click: Block SharePoint Legacy Auth',
+      requiredPermissions: ['SharePointTenantSettings.ReadWrite.All'],
+    })
+
+    const idleOn = sp.idleSessionSignOut?.isEnabled === true
+    checks.push({
+      id: 'sp_idle_signout',
+      cisRef: 'CIS 7.2.4',
+      title: 'Enable idle session sign-out for SharePoint & OneDrive web sessions',
+      category: 'SharePoint & OneDrive',
+      severity: 'medium',
+      status: idleOn ? 'pass' : 'warn',
+      currentValue: idleOn
+        ? `Enabled (sign out after ${Math.round((sp.idleSessionSignOut?.signOutAfterInSeconds ?? 0) / 60)} min)`
+        : 'Disabled',
+      expectedValue: 'Idle session sign-out enabled (e.g., 60 min sign-out / 55 min warning)',
+      howToResolve: [
+        'Open SharePoint admin center → Policies → Access control → Idle session sign-out.',
+        'Enable "Sign out inactive users automatically" and set timeout (e.g., 1 hour).',
+      ],
+      remediationId: !idleOn ? 'sp_enable_idle_signout' : undefined,
+      remediationLabel: '1-Click: Enable Idle Sign-out (60m)',
+      requiredPermissions: ['SharePointTenantSettings.ReadWrite.All'],
+    })
+  } else if (snapshot.sharePointSettingsError) {
+    checks.push({
+      id: 'sp_settings_unavailable',
+      cisRef: 'CIS 7.2.x',
+      title: 'SharePoint & OneDrive External Sharing and Legacy Auth Controls',
+      category: 'SharePoint & OneDrive',
+      severity: 'high',
+      status: 'unavailable',
+      currentValue: snapshot.sharePointSettingsError,
+      expectedValue: 'SharePointTenantSettings.ReadWrite.All granted',
+      howToResolve: [
+        'Grant SharePointTenantSettings.ReadWrite.All (Application permission + Admin Consent) in Entra ID to audit and 1-click harden SharePoint & OneDrive.',
+      ],
+      requiredPermissions: ['SharePointTenantSettings.ReadWrite.All'],
     })
   }
 

@@ -111,8 +111,76 @@ export const policySnapshots = sqliteTable(
   ],
 )
 
+export const cisSnapshots = sqliteTable(
+  'cis_snapshots',
+  {
+    id: text('id').primaryKey(),
+    actorUpn: text('actor_upn').notNull(),
+    scorePct: integer('score_pct').notNull(),
+    passed: integer('passed').notNull(),
+    failed: integer('failed').notNull(),
+    warned: integer('warned').notNull(),
+    unavailable: integer('unavailable').notNull(),
+    checksJson: text('checks_json').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [index('idx_cis_snapshots_created').on(table.createdAt)],
+)
+
+export type WebhookProvider = 'teams' | 'slack' | 'discord' | 'generic'
+
+export const alertWebhooks = sqliteTable('alert_webhooks', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  provider: text('provider').$type<WebhookProvider>().notNull(),
+  url: text('url').notNull(),
+  enabled: integer('enabled').notNull().default(1),
+  createdBy: text('created_by').notNull(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
+
+export const alertEvents = sqliteTable(
+  'alert_events',
+  {
+    id: text('id').primaryKey(),
+    ruleKey: text('rule_key').notNull(),
+    dedupeKey: text('dedupe_key').notNull(),
+    severity: text('severity').notNull(),
+    title: text('title').notNull(),
+    message: text('message').notNull(),
+    detailsJson: text('details_json').notNull().default('{}'),
+    deliveryStatus: text('delivery_status').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_alert_events_created').on(table.createdAt),
+    index('idx_alert_events_dedupe').on(table.dedupeKey, table.createdAt),
+  ],
+)
+
+export const onboardingTemplates = sqliteTable('onboarding_templates', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  description: text('description').notNull().default(''),
+  department: text('department').notNull().default(''),
+  jobTitle: text('job_title').notNull().default(''),
+  officeLocation: text('office_location').notNull().default(''),
+  usageLocation: text('usage_location').notNull().default('US'),
+  skuIdsJson: text('sku_ids_json').notNull().default('[]'),
+  groupIdsJson: text('group_ids_json').notNull().default('[]'),
+  issueTap: integer('issue_tap').notNull().default(0),
+  forcePasswordChange: integer('force_password_change').notNull().default(1),
+  createdBy: text('created_by').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
+
 export type SessionRow = typeof sessions.$inferSelect
 export type AuditLogRow = typeof auditLogs.$inferSelect
 export type JobRow = typeof jobs.$inferSelect
 export type AppSettingRow = typeof appSettings.$inferSelect
 export type PolicySnapshotRow = typeof policySnapshots.$inferSelect
+export type CisSnapshotRow = typeof cisSnapshots.$inferSelect
+export type AlertWebhookRow = typeof alertWebhooks.$inferSelect
+export type AlertEventRow = typeof alertEvents.$inferSelect
+export type OnboardingTemplateRow = typeof onboardingTemplates.$inferSelect

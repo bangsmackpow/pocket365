@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Mail,
+  Radar,
   Save,
   Search,
   ShieldAlert,
@@ -12,6 +13,8 @@ import {
 import { useEffect, useState } from 'react'
 import {
   deleteInboxRuleFn,
+  enqueueMailboxBecSweepFn,
+  getLatestBecSweepFn,
   getMailboxAuditFn,
   updateMailboxAutoReplyFn,
 } from '~/server/functions/mailboxes'
@@ -70,6 +73,55 @@ function MailboxesPage() {
     queryKey: ['mailbox-audit', selectedUser?.id],
     enabled: Boolean(selectedUser?.id),
     queryFn: () => getMailboxAuditFn({ data: { userId: selectedUser!.id } }),
+  })
+
+  const sweepQuery = useQuery({
+    queryKey: ['mailbox-bec-sweep'],
+    queryFn: () => getLatestBecSweepFn(),
+    refetchInterval: (q) => {
+      const status = q.state.data?.job?.status
+      return status === 'queued' || status === 'running' ? 3000 : false
+    },
+  })
+
+  const sweepMutation = useMutation({
+    mutationFn: () =>
+      enqueueMailboxBecSweepFn({ data: { onlyLicensed: true, maxUsers: 150 } }),
+    onSuccess: (res) => {
+      setBanner({
+        type: 'success',
+        text: `Started Tenant-Wide BEC Inbox Rule Sweep (Job ${res.job.id}). Results will appear below automatically.`,
+      })
+      queryClient.invalidateQueries({ queryKey: ['mailbox-bec-sweep'] })
+    },
+    onError: (err) => {
+      setBanner({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Failed to start BEC sweep.',
+      })
+    },
+  })
+
+  const deleteSweepRuleMutation = useMutation({
+    mutationFn: (vars: {
+      userId: string
+      userPrincipalName: string
+      ruleId: string
+      ruleDisplayName: string
+    }) => deleteInboxRuleFn({ data: vars }),
+    onSuccess: (_res, vars) => {
+      setBanner({
+        type: 'success',
+        text: `Deleted risky inbox rule "${vars.ruleDisplayName}" from ${vars.userPrincipalName}. Re-run sweep to refresh.`,
+      })
+      queryClient.invalidateQueries({ queryKey: ['mailbox-audit'] })
+    },
+    onError: (err) => {
+      setBanner({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Failed to delete rule.',
+      })
+    },
   })
 
   useEffect(() => {
@@ -143,16 +195,107 @@ function MailboxesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-          Mailbox Security & Settings
-        </h1>
-        <p className="text-sm text-slate-600">
-          Inspect Exchange Online inbox rules for BEC external forwarding or
-          stealth deletion indicators, and configure Out-of-Office automatic
-          replies.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+            Mailbox Security & Settings
+          </h1>
+          <p className="text-sm text-slate-600">
+            Run a tenant-wide BEC forwarding rule sweep across all licensed
+            mailboxes, inspect individual rules, and configure Out-of-Office
+            automatic replies.
+          </p>
+        </div>
+        {isAdmin && (
+          <button
+            type="button"
+            disabled={
+              sweepMutation.isPending ||
+              sweepQuery.data?.job?.status === 'queued' ||
+              sweepQuery.data?.job?.status === 'running'
+            }
+            onClick={() => sweepMutation.mutate()}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 cursor-pointer"
+          >
+            <Radar className="h-4 w-4" />
+            {sweepQuery.data?.job?.status === 'running' ||
+            sweepQuery.data?.job?.status === 'queued'
+              ? 'BEC Sweep Running...'
+              : 'Run Tenant-Wide BEC Sweep'}
+          </button>
+        )}
       </div>
+
+      {/* Tenant-Wide BEC Sweep Results Card */}
+      {sweepQuery.data?.job && (
+        <section className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="font-semibold text-slate-900 flex items-center gap-2">
+              <Radar className="h-4 w-4 text-indigo-600" />
+              Latest Tenant-Wide BEC Sweep ({sweepQuery.data.job.status})
+            </div>
+            <div className="text-slate-500">
+              {sweepQuery.data.result
+                ? `Scanned ${sweepQuery.data.result.scannedUsers} licensed user(s), ${sweepQuery.data.result.totalRulesInspected} rule(s) • ${sweepQuery.data.result.highRiskCount} high-risk, ${sweepQuery.data.result.mediumRiskCount} medium-risk`
+                : `Started ${new Date(sweepQuery.data.job.createdAt).toLocaleString()}`}
+            </div>
+          </div>
+          {sweepQuery.data.result && (
+            <div className="p-4">
+              {sweepQuery.data.result.findings.length === 0 ? (
+                <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  Clean sweep — no suspicious forwarding, redirect, or stealth
+                  delete rules found across{' '}
+                  {sweepQuery.data.result.scannedUsers} scanned mailboxes.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {sweepQuery.data.result.findings.map((f) => (
+                    <div
+                      key={`${f.userId}-${f.rule.id}`}
+                      className="rounded-lg border border-rose-200 bg-rose-50/70 p-3 text-xs flex flex-wrap items-center justify-between gap-3"
+                    >
+                      <div className="space-y-0.5 min-w-0">
+                        <div className="font-semibold text-slate-900">
+                          {f.userPrincipalName} — Rule: &ldquo;{f.rule.displayName}&rdquo;{' '}
+                          <span className="uppercase text-[10px] px-1.5 py-0.5 rounded bg-rose-100 text-rose-800">
+                            {f.rule.riskLevel} risk
+                          </span>
+                        </div>
+                        <div className="text-slate-700">
+                          {f.rule.actionsSummary.join(' • ')}
+                        </div>
+                        <div className="text-rose-800 font-medium">
+                          {f.rule.riskReasons.join(' — ')}
+                        </div>
+                      </div>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          disabled={deleteSweepRuleMutation.isPending}
+                          onClick={() =>
+                            deleteSweepRuleMutation.mutate({
+                              userId: f.userId,
+                              userPrincipalName: f.userPrincipalName,
+                              ruleId: f.rule.id,
+                              ruleDisplayName: f.rule.displayName,
+                            })
+                          }
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded bg-rose-600 hover:bg-rose-700 text-white font-medium cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Delete Rule
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
 
       {banner && (
         <div

@@ -1,15 +1,17 @@
+import crypto from 'node:crypto'
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
+import { desc } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireRole, requireSession } from '~/server/auth/guards'
+import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
+import { cisSnapshots } from '~/server/db/schema'
 import {
-  evaluateCisBenchmarks,
   GUEST_ROLE_IDS,
-  summarizeCisChecks,
   type CisRemediationId,
-  type CisTenantSnapshot,
 } from '~/server/graph/cis-benchmarks'
+import { collectCisScan } from '~/server/graph/cis-scanner'
 import {
   getGraphClient,
   type GraphDirectoryAudit,
@@ -25,100 +27,68 @@ async function waitMs(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function collectCisScan() {
-  const graph = getGraphClient()
-
-  const snapshot: CisTenantSnapshot = {
-    authorizationPolicy: null,
-    securityDefaults: null,
-    adminConsentPolicy: null,
-    conditionalAccessEnabledCount: null,
-    directoryRoles: null,
-    mfaRegistrations: null,
-    domains: null,
-  }
-
-  await Promise.all([
-    graph
-      .getAuthorizationPolicy()
-      .then((p) => {
-        snapshot.authorizationPolicy = p
-      })
-      .catch((err) => {
-        snapshot.authorizationPolicyError =
-          err instanceof Error ? err.message : String(err)
-      }),
-    graph
-      .getSecurityDefaultsPolicy()
-      .then((p) => {
-        snapshot.securityDefaults = p
-      })
-      .catch((err) => {
-        snapshot.securityDefaultsError =
-          err instanceof Error ? err.message : String(err)
-      }),
-    graph
-      .getAdminConsentRequestPolicy()
-      .then((p) => {
-        snapshot.adminConsentPolicy = p
-      })
-      .catch((err) => {
-        snapshot.adminConsentPolicyError =
-          err instanceof Error ? err.message : String(err)
-      }),
-    graph
-      .listConditionalAccessPoliciesSummary()
-      .then((policies) => {
-        snapshot.conditionalAccessEnabledCount = policies.filter(
-          (p) => p.state === 'enabled',
-        ).length
-      })
-      .catch(() => {
-        snapshot.conditionalAccessEnabledCount = 0
-      }),
-    graph
-      .listDirectoryRolesWithMembers()
-      .then((roles) => {
-        snapshot.directoryRoles = roles
-      })
-      .catch((err) => {
-        snapshot.directoryRolesError =
-          err instanceof Error ? err.message : String(err)
-      }),
-    graph
-      .listUserRegistrationDetails({ top: 500 })
-      .then((res) => {
-        snapshot.mfaRegistrations = res.items
-      })
-      .catch((err) => {
-        snapshot.mfaRegistrationsError =
-          err instanceof Error ? err.message : String(err)
-      }),
-    graph
-      .listDomains()
-      .then((domains) => {
-        snapshot.domains = domains
-      })
-      .catch((err) => {
-        snapshot.domainsError =
-          err instanceof Error ? err.message : String(err)
-      }),
-  ])
-
-  const checks = evaluateCisBenchmarks(snapshot)
-  const summary = summarizeCisChecks(checks)
-
-  return {
-    scannedAt: new Date().toISOString(),
-    checks,
-    summary,
-  }
-}
-
 export const runCisBenchmarkScanFn = createServerFn({ method: 'GET' }).handler(
   async () => {
     requireSession()
-    return collectCisScan()
+    const scan = await collectCisScan()
+    const db = getDb()
+    const history = db
+      .select({
+        id: cisSnapshots.id,
+        actorUpn: cisSnapshots.actorUpn,
+        scorePct: cisSnapshots.scorePct,
+        passed: cisSnapshots.passed,
+        failed: cisSnapshots.failed,
+        warned: cisSnapshots.warned,
+        unavailable: cisSnapshots.unavailable,
+        createdAt: cisSnapshots.createdAt,
+      })
+      .from(cisSnapshots)
+      .orderBy(desc(cisSnapshots.createdAt))
+      .limit(15)
+      .all()
+
+    return {
+      ...scan,
+      history,
+    }
+  },
+)
+
+export const saveCisSnapshotFn = createServerFn({ method: 'POST' }).handler(
+  async () => {
+    const session = requireRole('admin', undefined, 'cis.save_snapshot')
+    const scan = await collectCisScan()
+    const db = getDb()
+    const id = crypto.randomUUID()
+    const createdAt = Date.now()
+
+    db.insert(cisSnapshots)
+      .values({
+        id,
+        actorUpn: session.upn,
+        scorePct: scan.summary.scorePct,
+        passed: scan.summary.passed,
+        failed: scan.summary.failed,
+        warned: scan.summary.warned,
+        unavailable: scan.summary.unavailable,
+        checksJson: JSON.stringify(scan.checks),
+        createdAt,
+      })
+      .run()
+
+    recordAuditLog({
+      actorOid: session.oid,
+      actorUpn: session.upn,
+      actorRole: session.role,
+      action: 'cis.save_snapshot',
+      target: id,
+      status: 'success',
+      details: scan.summary,
+      ipAddress: getClientIp(getRequest()),
+    })
+
+    return { ok: true, id, scorePct: scan.summary.scorePct }
   },
 )
 
@@ -132,6 +102,13 @@ const REMEDIATION_TO_CHECK_ID: Record<CisRemediationId, string> = {
   restrict_guest_invites: 'guest_invite_restriction',
   block_msol_powershell: 'block_msol_powershell',
   enable_admin_consent_workflow: 'admin_consent_workflow',
+  disable_email_verified_join: 'email_verified_join',
+  disable_sms_auth_method: 'auth_disable_sms',
+  disable_voice_auth_method: 'auth_disable_voice',
+  sp_disable_anonymous_links: 'sp_anonymous_links',
+  sp_disable_external_resharing: 'sp_external_resharing',
+  sp_block_legacy_auth: 'sp_legacy_auth',
+  sp_enable_idle_signout: 'sp_idle_signout',
 }
 
 const remediationSchema = z.object({
@@ -145,6 +122,13 @@ const remediationSchema = z.object({
     'restrict_guest_invites',
     'block_msol_powershell',
     'enable_admin_consent_workflow',
+    'disable_email_verified_join',
+    'disable_sms_auth_method',
+    'disable_voice_auth_method',
+    'sp_disable_anonymous_links',
+    'sp_disable_external_resharing',
+    'sp_block_legacy_auth',
+    'sp_enable_idle_signout',
   ]),
 })
 
@@ -223,6 +207,48 @@ export const applyCisRemediationFn = createServerFn({ method: 'POST' })
         case 'enable_admin_consent_workflow':
           await graph.setAdminConsentRequestEnabled(true)
           summary = 'Enabled Admin Consent Request Workflow (CIS 5.1.5.2).'
+          break
+        case 'disable_email_verified_join':
+          await graph.updateAuthorizationPolicy({
+            allowEmailVerifiedUsersToJoinOrganization: false,
+          })
+          summary = 'Blocked self-service email-verified tenant join (CIS 5.1.2.7).'
+          break
+        case 'disable_sms_auth_method':
+          await graph.setAuthenticationMethodConfigState('Sms', 'disabled')
+          summary = 'Disabled weak SMS authentication method (CIS 5.2.3.2).'
+          break
+        case 'disable_voice_auth_method':
+          await graph.setAuthenticationMethodConfigState('Voice', 'disabled')
+          summary = 'Disabled weak Voice authentication method (CIS 5.2.3.3).'
+          break
+        case 'sp_disable_anonymous_links':
+          await graph.updateSharePointSettings({
+            sharingCapability: 'externalUserSharingOnly',
+          })
+          summary = 'Disabled anonymous Anyone sharing links in SharePoint (CIS 7.2.1).'
+          break
+        case 'sp_disable_external_resharing':
+          await graph.updateSharePointSettings({
+            isResharingByExternalUsersEnabled: false,
+          })
+          summary = 'Blocked external guest resharing in SharePoint (CIS 7.2.2).'
+          break
+        case 'sp_block_legacy_auth':
+          await graph.updateSharePointSettings({
+            isLegacyAuthProtocolsEnabled: false,
+          })
+          summary = 'Blocked legacy authentication protocols in SharePoint (CIS 7.2.3).'
+          break
+        case 'sp_enable_idle_signout':
+          await graph.updateSharePointSettings({
+            idleSessionSignOut: {
+              isEnabled: true,
+              warnAfterInSeconds: 3300,
+              signOutAfterInSeconds: 3600,
+            },
+          })
+          summary = 'Enabled 60-minute SharePoint idle session sign-out (CIS 7.2.4).'
           break
       }
 

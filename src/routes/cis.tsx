@@ -2,9 +2,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link, redirect } from '@tanstack/react-router'
 import {
   AlertTriangle,
+  Camera,
   CheckCircle2,
   ClipboardCheck,
+  Download,
   ExternalLink,
+  Printer,
   RefreshCw,
   Wrench,
   XCircle,
@@ -13,6 +16,7 @@ import { useMemo, useState } from 'react'
 import {
   applyCisRemediationFn,
   runCisBenchmarkScanFn,
+  saveCisSnapshotFn,
 } from '~/server/functions/governance'
 import type {
   CisCategory,
@@ -65,7 +69,13 @@ function CisBenchmarksPage() {
       setActiveRemediation(null)
       setBanner({ type: 'success', text: res.summary })
       if (res.scan) {
-        queryClient.setQueryData(['cis-benchmarks'], res.scan)
+        queryClient.setQueryData(['cis-benchmarks'], (prev: unknown) => {
+          const prevObj =
+            prev && typeof prev === 'object'
+              ? (prev as Record<string, unknown>)
+              : {}
+          return { ...prevObj, ...res.scan }
+        })
       } else {
         queryClient.invalidateQueries({ queryKey: ['cis-benchmarks'] })
       }
@@ -81,6 +91,52 @@ function CisBenchmarksPage() {
       })
     },
   })
+
+  const snapshotMutation = useMutation({
+    mutationFn: () => saveCisSnapshotFn(),
+    onSuccess: (res) => {
+      setBanner({
+        type: 'success',
+        text: `Saved CIS compliance snapshot (${res.scorePct}%) to SQLite history.`,
+      })
+      queryClient.invalidateQueries({ queryKey: ['cis-benchmarks'] })
+    },
+    onError: (err) => {
+      setBanner({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Failed to save snapshot.',
+      })
+    },
+  })
+
+  const exportCsv = () => {
+    const checks = scanQuery.data?.checks ?? []
+    const lines = [
+      'CIS_Ref,Category,Severity,Status,Title,Observed,Expected',
+      ...checks.map((c) =>
+        [
+          c.cisRef,
+          c.category,
+          c.severity,
+          c.status,
+          c.title,
+          c.currentValue,
+          c.expectedValue,
+        ]
+          .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+          .join(','),
+      ),
+    ]
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `pocket365-cis-report-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
 
   const filteredChecks = useMemo(() => {
     const list = scanQuery.data?.checks ?? []
@@ -114,16 +170,46 @@ function CisBenchmarksPage() {
             and audited 1-click fixes for Graph-remediable controls.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => scanQuery.refetch()}
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer"
-        >
-          <RefreshCw
-            className={`h-4 w-4 ${scanQuery.isFetching ? 'animate-spin' : ''}`}
-          />
-          Re-scan Tenant
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {isAdmin && (
+            <button
+              type="button"
+              disabled={snapshotMutation.isPending}
+              onClick={() => snapshotMutation.mutate()}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 cursor-pointer"
+            >
+              <Camera className="h-3.5 w-3.5" />
+              Save Snapshot
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={!scanQuery.data?.checks.length}
+            onClick={exportCsv}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 cursor-pointer"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 cursor-pointer"
+          >
+            <Printer className="h-3.5 w-3.5" />
+            Print Report
+          </button>
+          <button
+            type="button"
+            onClick={() => scanQuery.refetch()}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${scanQuery.isFetching ? 'animate-spin' : ''}`}
+            />
+            Re-scan Tenant
+          </button>
+        </div>
       </div>
 
       {banner && (
@@ -225,8 +311,35 @@ function CisBenchmarksPage() {
           <option value="Privileged Access">Privileged Access</option>
           <option value="Apps & Consent">Apps & Consent</option>
           <option value="Guests & Collaboration">Guests & Collaboration</option>
+          <option value="Email & DNS Security">Email & DNS Security</option>
+          <option value="SharePoint & OneDrive">SharePoint & OneDrive</option>
         </select>
       </div>
+
+      {/* CIS Score History Trend */}
+      {(scanQuery.data?.history?.length ?? 0) > 0 && (
+        <section className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-2">
+          <div className="text-xs font-semibold text-slate-700">
+            CIS Compliance History (SQLite Snapshots)
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {scanQuery.data!.history.slice(0, 8).map((h) => (
+              <div
+                key={h.id}
+                className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs flex items-center gap-2"
+              >
+                <span className="font-bold text-indigo-700">{h.scorePct}%</span>
+                <span className="text-slate-500">
+                  ({h.passed}P / {h.failed}F)
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  {new Date(h.createdAt).toLocaleDateString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Controls List */}
       {scanQuery.isLoading ? (

@@ -430,6 +430,53 @@ export interface GraphSecurityAlert {
   description?: string | null
 }
 
+export interface GraphSharePointSettings {
+  sharingCapability?: string
+  isLegacyAuthProtocolsEnabled?: boolean
+  isResharingByExternalUsersEnabled?: boolean
+  isSitesStorageLimitAutomatic?: boolean
+  sharingAllowedDomainList?: string[]
+  sharingBlockedDomainList?: string[]
+  sharingDomainRestrictionMode?: string
+  idleSessionSignOut?: {
+    isEnabled?: boolean
+    warnAfterInSeconds?: number
+    signOutAfterInSeconds?: number
+  }
+}
+
+export interface GraphAuthMethodConfiguration {
+  id: string
+  '@odata.type'?: string
+  state: 'enabled' | 'disabled'
+  featureSettings?: {
+    displayAppInformationRequiredState?: { state?: string }
+    displayLocationInformationRequiredState?: { state?: string }
+    numberMatchingRequiredState?: { state?: string }
+  }
+}
+
+export interface GraphAuthMethodsPolicy {
+  id: string
+  policyMigrationState?: string
+  authenticationMethodConfigurations?: GraphAuthMethodConfiguration[]
+}
+
+export interface CreateEntraUserInput {
+  displayName: string
+  givenName?: string
+  surname?: string
+  mailNickname: string
+  userPrincipalName: string
+  password: string
+  forceChangePasswordNextSignIn: boolean
+  usageLocation: string
+  department?: string
+  jobTitle?: string
+  officeLocation?: string
+  accountEnabled?: boolean
+}
+
 export interface GraphPageResult<T> {
   items: T[]
   nextLink: string | null
@@ -1418,6 +1465,68 @@ export class MicrosoftGraphClient {
       `/security/alerts_v2?$top=${Math.min(Math.max(top, 1), 200)}&$orderby=createdDateTime desc`,
     )
     return res.value ?? []
+  }
+
+  public async getSharePointSettings(): Promise<GraphSharePointSettings> {
+    return this.request<GraphSharePointSettings>('/admin/sharepoint/settings')
+  }
+
+  public async updateSharePointSettings(
+    patch: Partial<GraphSharePointSettings>,
+  ): Promise<GraphSharePointSettings> {
+    return this.request<GraphSharePointSettings>('/admin/sharepoint/settings', {
+      method: 'PATCH',
+      body: patch,
+    })
+  }
+
+  public async getAuthenticationMethodsPolicy(): Promise<GraphAuthMethodsPolicy> {
+    return this.request<GraphAuthMethodsPolicy>(
+      '/policies/authenticationMethodsPolicy',
+    )
+  }
+
+  public async setAuthenticationMethodConfigState(
+    methodId: 'Sms' | 'Voice' | 'Email',
+    state: 'enabled' | 'disabled',
+  ): Promise<void> {
+    const odataTypeMap = {
+      Sms: '#microsoft.graph.smsAuthenticationMethodConfiguration',
+      Voice: '#microsoft.graph.voiceAuthenticationMethodConfiguration',
+      Email: '#microsoft.graph.emailAuthenticationMethodConfiguration',
+    } as const
+    await this.request<void>(
+      `/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/${methodId}`,
+      {
+        method: 'PATCH',
+        body: {
+          '@odata.type': odataTypeMap[methodId],
+          state,
+        },
+      },
+    )
+  }
+
+  public async createUser(input: CreateEntraUserInput): Promise<GraphUser> {
+    return this.request<GraphUser>('/users', {
+      method: 'POST',
+      body: {
+        accountEnabled: input.accountEnabled ?? true,
+        displayName: input.displayName,
+        givenName: input.givenName || undefined,
+        surname: input.surname || undefined,
+        mailNickname: input.mailNickname,
+        userPrincipalName: input.userPrincipalName,
+        usageLocation: input.usageLocation,
+        department: input.department || undefined,
+        jobTitle: input.jobTitle || undefined,
+        officeLocation: input.officeLocation || undefined,
+        passwordProfile: {
+          password: input.password,
+          forceChangePasswordNextSignIn: input.forceChangePasswordNextSignIn,
+        },
+      },
+    })
   }
 }
 

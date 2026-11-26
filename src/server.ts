@@ -1,12 +1,14 @@
 import handler, { createServerEntry } from '@tanstack/react-start/server-entry'
+import { ensureAlertSchedulerStarted } from '~/server/alerts/engine'
 import { getDb } from '~/server/db'
 import { ensureJobWorkerStarted } from '~/server/graph/jobs'
 import { getForwardedHost, getForwardedProto } from '~/server/http/proxy'
 
-// Ensure SQLite schema migrations and background job worker initialize on startup
+// Ensure SQLite schema migrations, background job worker, and alert scheduler initialize on startup
 try {
   getDb()
   ensureJobWorkerStarted()
+  ensureAlertSchedulerStarted()
 } catch (err) {
   console.error('[pocket365] Startup initialization warning:', err)
 }

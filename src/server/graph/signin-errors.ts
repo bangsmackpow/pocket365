@@ -280,6 +280,18 @@ export const POCKET365_GRAPH_PERMISSIONS: GraphPermissionRequirement[] = [
     purpose: 'Enable Microsoft Security Defaults via 1-click CIS remediation (CIS 5.2.2.1).',
   },
   {
+    permission: 'Policy.ReadWrite.AuthenticationMethod',
+    module: 'CIS Auth Methods',
+    access: 'write',
+    purpose: 'Inspect Authentication Methods Policy and disable weak SMS/Voice MFA via 1-click CIS remediation.',
+  },
+  {
+    permission: 'SharePointTenantSettings.ReadWrite.All',
+    module: 'CIS SharePoint & OneDrive',
+    access: 'write',
+    purpose: 'Audit SharePoint external sharing & legacy auth and apply 1-click CIS Section 7 fixes.',
+  },
+  {
     permission: 'Application.Read.All',
     module: 'Apps & Expiring Secrets',
     access: 'read',
