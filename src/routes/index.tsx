@@ -41,7 +41,7 @@ export const Route = createFileRoute('/')({
   component: DashboardPage,
 })
 
-type FrameworkMode = 'cis' | 'nist' | 'all'
+type FrameworkMode = 'all' | 'cis' | 'nist' | 'soc2' | 'iso'
 type ActionFilterTab = 'actionable' | 'ignored'
 
 export function DashboardPage() {
@@ -131,7 +131,14 @@ export function DashboardPage() {
     data.organization?.verifiedDomains[0]?.name ??
     'Tenant Connected'
 
-  const score = framework === 'nist' ? data.compliance.nistScorePct : data.compliance.cisScorePct
+  const score =
+    framework === 'nist'
+      ? data.compliance.nistScorePct
+      : framework === 'soc2'
+        ? data.compliance.soc2ScorePct
+        : framework === 'iso'
+          ? data.compliance.isoScorePct
+          : data.compliance.cisScorePct
   const grade =
     score >= 85
       ? { label: 'Grade A', tone: 'emerald' }
@@ -165,7 +172,7 @@ export function DashboardPage() {
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Real-time compliance posture (CIS & NIST), prioritized action queue, and tenant health telemetry.
+            Real-time compliance posture (CIS, NIST, SOC 2, ISO 27001), prioritized action queue, and tenant health telemetry.
           </p>
         </div>
 
@@ -197,7 +204,25 @@ export function DashboardPage() {
                 framework === 'nist' ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'hover:text-slate-900'
               }`}
             >
-              NIST SP 800-171 / CSF
+              NIST SP 800-171
+            </button>
+            <button
+              type="button"
+              onClick={() => setFramework('soc2')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                framework === 'soc2' ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'hover:text-slate-900'
+              }`}
+            >
+              SOC 2 Type II
+            </button>
+            <button
+              type="button"
+              onClick={() => setFramework('iso')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                framework === 'iso' ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'hover:text-slate-900'
+              }`}
+            >
+              ISO/IEC 27001
             </button>
           </div>
 
@@ -256,7 +281,15 @@ export function DashboardPage() {
         <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              {framework === 'nist' ? 'NIST SP 800-171' : framework === 'cis' ? 'CIS Benchmark' : 'Compliance Posture'}
+              {framework === 'nist'
+                ? 'NIST SP 800-171'
+                : framework === 'soc2'
+                  ? 'SOC 2 Type II'
+                  : framework === 'iso'
+                    ? 'ISO/IEC 27001'
+                    : framework === 'cis'
+                      ? 'CIS M365 Benchmark'
+                      : 'Unified Compliance Posture'}
             </span>
             <ShieldCheck className="h-5 w-5 text-indigo-600" />
           </div>
@@ -440,6 +473,16 @@ export function DashboardPage() {
                       {(framework === 'all' || framework === 'nist') && nistTag && (
                         <span className="font-mono text-[11px] font-semibold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
                           {nistTag}
+                        </span>
+                      )}
+                      {(framework === 'all' || framework === 'soc2') && item.soc2Ref && (
+                        <span className="font-mono text-[11px] font-semibold px-2 py-0.5 rounded-md bg-cyan-50 text-cyan-800 border border-cyan-200">
+                          {item.soc2Ref}
+                        </span>
+                      )}
+                      {(framework === 'all' || framework === 'iso') && item.isoRef && (
+                        <span className="font-mono text-[11px] font-semibold px-2 py-0.5 rounded-md bg-purple-50 text-purple-800 border border-purple-200">
+                          {item.isoRef}
                         </span>
                       )}
 

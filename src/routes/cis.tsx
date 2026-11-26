@@ -48,7 +48,7 @@ function CisBenchmarksPage() {
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [categoryFilter, setCategoryFilter] = useState<CisCategory | 'all'>('all')
-  const [frameworkView, setFrameworkView] = useState<'both' | 'cis' | 'nist'>('both')
+  const [frameworkView, setFrameworkView] = useState<'all' | 'cis' | 'nist' | 'soc2' | 'iso'>('all')
   const [banner, setBanner] = useState<{
     type: 'success' | 'error'
     text: string
@@ -113,11 +113,13 @@ function CisBenchmarksPage() {
   const exportCsv = () => {
     const checks = scanQuery.data?.checks ?? []
     const lines = [
-      'CIS_Ref,NIST_Ref,Category,Severity,Status,Title,Observed,Expected',
+      'CIS_Ref,NIST_Ref,SOC2_Ref,ISO27001_Ref,Category,Severity,Status,Title,Observed,Expected',
       ...checks.map((c) =>
         [
           c.cisRef,
           c.nistRef || '',
+          c.soc2Ref || '',
+          c.isoRef || '',
           c.category,
           c.severity,
           c.status,
@@ -133,7 +135,7 @@ function CisBenchmarksPage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `pocket365-cis-report-${new Date().toISOString().slice(0, 10)}.csv`
+    a.download = `pocket365-compliance-report-${new Date().toISOString().slice(0, 10)}.csv`
     document.body.appendChild(a)
     a.click()
     a.remove()
@@ -177,12 +179,12 @@ function CisBenchmarksPage() {
           <div className="inline-flex items-center rounded-xl bg-slate-100 p-1 text-xs font-semibold text-slate-600">
             <button
               type="button"
-              onClick={() => setFrameworkView('both')}
+              onClick={() => setFrameworkView('all')}
               className={`px-3 py-1.5 rounded-lg transition-all ${
-                frameworkView === 'both' ? 'bg-white text-slate-900 shadow-xs' : 'hover:text-slate-900'
+                frameworkView === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'hover:text-slate-900'
               }`}
             >
-              Unified CIS + NIST
+              Unified All Frameworks
             </button>
             <button
               type="button"
@@ -191,7 +193,7 @@ function CisBenchmarksPage() {
                 frameworkView === 'cis' ? 'bg-white text-slate-900 shadow-xs' : 'hover:text-slate-900'
               }`}
             >
-              CIS Only
+              CIS M365
             </button>
             <button
               type="button"
@@ -200,7 +202,25 @@ function CisBenchmarksPage() {
                 frameworkView === 'nist' ? 'bg-white text-slate-900 shadow-xs' : 'hover:text-slate-900'
               }`}
             >
-              NIST SP 800-171 Only
+              NIST SP 800-171
+            </button>
+            <button
+              type="button"
+              onClick={() => setFrameworkView('soc2')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                frameworkView === 'soc2' ? 'bg-white text-slate-900 shadow-xs' : 'hover:text-slate-900'
+              }`}
+            >
+              SOC 2 Type II
+            </button>
+            <button
+              type="button"
+              onClick={() => setFrameworkView('iso')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                frameworkView === 'iso' ? 'bg-white text-slate-900 shadow-xs' : 'hover:text-slate-900'
+              }`}
+            >
+              ISO/IEC 27001
             </button>
           </div>
 
@@ -414,7 +434,7 @@ function CisCheckCard({
 }: {
   check: CisCheckResult
   isAdmin: boolean
-  frameworkView: 'both' | 'cis' | 'nist'
+  frameworkView: 'all' | 'cis' | 'nist' | 'soc2' | 'iso'
   isFixing: boolean
   onFix: (id: CisRemediationId) => void
 }) {
@@ -439,14 +459,24 @@ function CisCheckCard({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1 min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            {(frameworkView === 'both' || frameworkView === 'cis') && (
+            {(frameworkView === 'all' || frameworkView === 'cis') && (
               <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded">
                 {check.cisRef}
               </span>
             )}
-            {(frameworkView === 'both' || frameworkView === 'nist') && check.nistRef && (
+            {(frameworkView === 'all' || frameworkView === 'nist') && check.nistRef && (
               <span className="font-mono text-xs font-bold text-slate-700 bg-slate-100 border border-slate-300 px-2 py-0.5 rounded">
                 {check.nistRef}
+              </span>
+            )}
+            {(frameworkView === 'all' || frameworkView === 'soc2') && check.soc2Ref && (
+              <span className="font-mono text-xs font-bold text-cyan-800 bg-cyan-50 border border-cyan-200 px-2 py-0.5 rounded">
+                {check.soc2Ref}
+              </span>
+            )}
+            {(frameworkView === 'all' || frameworkView === 'iso') && check.isoRef && (
+              <span className="font-mono text-xs font-bold text-purple-800 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded">
+                {check.isoRef}
               </span>
             )}
             <span

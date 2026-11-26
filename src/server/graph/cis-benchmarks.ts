@@ -45,6 +45,10 @@ export interface CisCheckResult {
   cisRef: string
   nistRef?: string
   nistTitle?: string
+  soc2Ref?: string
+  soc2Title?: string
+  isoRef?: string
+  isoTitle?: string
   title: string
   category: CisCategory
   severity: CisSeverity
@@ -186,6 +190,234 @@ export const NIST_MAPPING_BY_ID: Record<
   sp_settings_unavailable: {
     nistRef: 'NIST AC.L2-3.1.20 / CSF PR.DS-05',
     nistTitle: 'SharePoint & OneDrive Security Inspection',
+  },
+}
+
+export const SOC2_MAPPING_BY_ID: Record<
+  string,
+  { soc2Ref: string; soc2Title: string }
+> = {
+  security_defaults: {
+    soc2Ref: 'SOC 2 CC6.1',
+    soc2Title: 'Logical Access Controls & Multi-Factor Authentication',
+  },
+  admin_mfa: {
+    soc2Ref: 'SOC 2 CC6.1 / CC6.3',
+    soc2Title: 'Privileged User Multi-Factor Authentication',
+  },
+  all_users_mfa: {
+    soc2Ref: 'SOC 2 CC6.1',
+    soc2Title: 'Workforce Multi-Factor Authentication Enforcement',
+  },
+  global_admin_count: {
+    soc2Ref: 'SOC 2 CC6.3',
+    soc2Title: 'Least Privilege & Administrative Account Limitation',
+  },
+  user_app_consent: {
+    soc2Ref: 'SOC 2 CC6.8',
+    soc2Title: 'Third-Party Application Data Access Authorization',
+  },
+  user_app_registration: {
+    soc2Ref: 'SOC 2 CC6.8',
+    soc2Title: 'Software & Application Registration Restrictions',
+  },
+  user_tenant_creation: {
+    soc2Ref: 'SOC 2 CC6.6',
+    soc2Title: 'Boundary Protection & Unmanaged Tenant Sprawl Prevention',
+  },
+  user_security_groups: {
+    soc2Ref: 'SOC 2 CC6.3',
+    soc2Title: 'Authorized Security Group & Membership Management',
+  },
+  block_msol_powershell: {
+    soc2Ref: 'SOC 2 CC6.1',
+    soc2Title: 'Prohibit Legacy Remote Management Endpoints',
+  },
+  guest_access_restriction: {
+    soc2Ref: 'SOC 2 CC6.6',
+    soc2Title: 'External & Guest Access Least Privilege Restrictions',
+  },
+  guest_invite_restriction: {
+    soc2Ref: 'SOC 2 CC6.6',
+    soc2Title: 'Authorized External Collaboration & Guest Invitation Controls',
+  },
+  email_verified_join: {
+    soc2Ref: 'SOC 2 CC6.2',
+    soc2Title: 'Controlled Identity Provisioning & Account Creation',
+  },
+  authorization_policy_unavailable: {
+    soc2Ref: 'SOC 2 CC6.1',
+    soc2Title: 'Directory Authorization Policy Inspection',
+  },
+  admin_consent_workflow: {
+    soc2Ref: 'SOC 2 CC6.8',
+    soc2Title: 'Formal Access Request & Approval Workflow for Applications',
+  },
+  password_never_expires: {
+    soc2Ref: 'SOC 2 CC6.1',
+    soc2Title: 'Credential Lifecycle & Password Policy Standards (NIST SP 800-63B)',
+  },
+  dns_spf: {
+    soc2Ref: 'SOC 2 CC6.7',
+    soc2Title: 'Email Origin Authentication & Anti-Spoofing Defense (SPF)',
+  },
+  dns_dkim: {
+    soc2Ref: 'SOC 2 CC6.7',
+    soc2Title: 'Cryptographic Message Integrity & Non-Repudiation (DKIM)',
+  },
+  dns_dmarc: {
+    soc2Ref: 'SOC 2 CC6.7',
+    soc2Title: 'Domain Message Authentication, Reporting & Conformance (DMARC)',
+  },
+  auth_ms_authenticator_context: {
+    soc2Ref: 'SOC 2 CC6.1',
+    soc2Title: 'MFA Fatigue Defense via Application & Geographic Context',
+  },
+  auth_disable_sms: {
+    soc2Ref: 'SOC 2 CC6.1',
+    soc2Title: 'Deprecate Phishable Out-of-Band SMS Verification',
+  },
+  auth_disable_voice: {
+    soc2Ref: 'SOC 2 CC6.1',
+    soc2Title: 'Deprecate Insecure Voice Call Authentication',
+  },
+  auth_methods_unavailable: {
+    soc2Ref: 'SOC 2 CC6.1',
+    soc2Title: 'Authentication Methods Policy Inspection',
+  },
+  sp_anonymous_links: {
+    soc2Ref: 'SOC 2 CC6.6',
+    soc2Title: 'Prevent Unauthenticated Public Data Exposure (Anyone Links)',
+  },
+  sp_external_resharing: {
+    soc2Ref: 'SOC 2 CC6.6',
+    soc2Title: 'Prohibit External Guest Secondary Resharing of Corporate Files',
+  },
+  sp_legacy_auth: {
+    soc2Ref: 'SOC 2 CC6.1',
+    soc2Title: 'Block Non-Modern Authentication Protocols in File Repositories',
+  },
+  sp_idle_signout: {
+    soc2Ref: 'SOC 2 CC7.2',
+    soc2Title: 'Enforce Session Inactivity Timeouts & Automatic Lockout',
+  },
+  sp_settings_unavailable: {
+    soc2Ref: 'SOC 2 CC6.6',
+    soc2Title: 'File Repository Security Policy Inspection',
+  },
+}
+
+export const ISO_MAPPING_BY_ID: Record<
+  string,
+  { isoRef: string; isoTitle: string }
+> = {
+  security_defaults: {
+    isoRef: 'ISO 27001:2022 A.5.15 / A.8.5',
+    isoTitle: 'Access Control & Secure Authentication Enforcement',
+  },
+  admin_mfa: {
+    isoRef: 'ISO 27001:2022 A.8.2 / A.8.5',
+    isoTitle: 'Privileged Access Rights & Strong Authentication',
+  },
+  all_users_mfa: {
+    isoRef: 'ISO 27001:2022 A.5.15 / A.8.5',
+    isoTitle: 'Workforce Authentication & Access Control',
+  },
+  global_admin_count: {
+    isoRef: 'ISO 27001:2022 A.8.2',
+    isoTitle: 'Privileged Access Rights Allocation & Restriction',
+  },
+  user_app_consent: {
+    isoRef: 'ISO 27001:2022 A.8.25',
+    isoTitle: 'Secure Application Lifecycle & External Access Consent',
+  },
+  user_app_registration: {
+    isoRef: 'ISO 27001:2022 A.8.25',
+    isoTitle: 'Control of Application Registration & Integration',
+  },
+  user_tenant_creation: {
+    isoRef: 'ISO 27001:2022 A.5.15',
+    isoTitle: 'Organizational Access & Boundary Control',
+  },
+  user_security_groups: {
+    isoRef: 'ISO 27001:2022 A.5.18',
+    isoTitle: 'Access Rights Management & Group Governance',
+  },
+  block_msol_powershell: {
+    isoRef: 'ISO 27001:2022 A.8.20',
+    isoTitle: 'Network & Management Protocol Security',
+  },
+  guest_access_restriction: {
+    isoRef: 'ISO 27001:2022 A.5.19 / A.5.20',
+    isoTitle: 'Information Security in Supplier & Partner Relationships',
+  },
+  guest_invite_restriction: {
+    isoRef: 'ISO 27001:2022 A.5.19',
+    isoTitle: 'Control of Partner Invitations & External Sharing',
+  },
+  email_verified_join: {
+    isoRef: 'ISO 27001:2022 A.5.16',
+    isoTitle: 'Identity Management & Controlled Account Provisioning',
+  },
+  authorization_policy_unavailable: {
+    isoRef: 'ISO 27001:2022 A.5.15',
+    isoTitle: 'Access Control Policy Inspection',
+  },
+  admin_consent_workflow: {
+    isoRef: 'ISO 27001:2022 A.8.25',
+    isoTitle: 'Formal Authorization for Third-Party Applications',
+  },
+  password_never_expires: {
+    isoRef: 'ISO 27001:2022 A.5.17',
+    isoTitle: 'Authentication Information Management & Modern Password Policies',
+  },
+  dns_spf: {
+    isoRef: 'ISO 27001:2022 A.8.20 / A.8.24',
+    isoTitle: 'Network Security & Email Origin Authentication',
+  },
+  dns_dkim: {
+    isoRef: 'ISO 27001:2022 A.8.24',
+    isoTitle: 'Cryptographic Message Integrity & Non-Repudiation',
+  },
+  dns_dmarc: {
+    isoRef: 'ISO 27001:2022 A.8.20',
+    isoTitle: 'Network Protection & Phishing Mitigation',
+  },
+  auth_ms_authenticator_context: {
+    isoRef: 'ISO 27001:2022 A.8.5',
+    isoTitle: 'Secure Authentication & Context-Rich Verification Prompts',
+  },
+  auth_disable_sms: {
+    isoRef: 'ISO 27001:2022 A.8.5',
+    isoTitle: 'Deprecation of Insecure Telecommunications Credentials',
+  },
+  auth_disable_voice: {
+    isoRef: 'ISO 27001:2022 A.8.5',
+    isoTitle: 'Deprecation of Insecure PSTN Voice Authentication',
+  },
+  auth_methods_unavailable: {
+    isoRef: 'ISO 27001:2022 A.8.5',
+    isoTitle: 'Authentication Policy Inspection',
+  },
+  sp_anonymous_links: {
+    isoRef: 'ISO 27001:2022 A.8.12',
+    isoTitle: 'Data Leakage Prevention via Public Unauthenticated Links',
+  },
+  sp_external_resharing: {
+    isoRef: 'ISO 27001:2022 A.8.12',
+    isoTitle: 'Data Leakage Prevention via External Guest Secondary Sharing',
+  },
+  sp_legacy_auth: {
+    isoRef: 'ISO 27001:2022 A.5.15 / A.8.20',
+    isoTitle: 'Enforce Modern Encrypted Transport & Authentication Protocols',
+  },
+  sp_idle_signout: {
+    isoRef: 'ISO 27001:2022 A.8.1',
+    isoTitle: 'User Endpoint Session Inactivity Management',
+  },
+  sp_settings_unavailable: {
+    isoRef: 'ISO 27001:2022 A.8.12',
+    isoTitle: 'Data Protection Policy Inspection',
   },
 }
 
@@ -948,10 +1180,16 @@ export function evaluateCisBenchmarks(
 
   return checks.map((c) => {
     const nist = NIST_MAPPING_BY_ID[c.id]
+    const soc2 = SOC2_MAPPING_BY_ID[c.id]
+    const iso = ISO_MAPPING_BY_ID[c.id]
     return {
       ...c,
       nistRef: nist?.nistRef ?? 'NIST SP 800-171',
       nistTitle: nist?.nistTitle ?? c.title,
+      soc2Ref: soc2?.soc2Ref ?? 'SOC 2 CC6.1',
+      soc2Title: soc2?.soc2Title ?? c.title,
+      isoRef: iso?.isoRef ?? 'ISO 27001:2022 A.5.15',
+      isoTitle: iso?.isoTitle ?? c.title,
     }
   })
 }

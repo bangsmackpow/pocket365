@@ -46,6 +46,8 @@ export interface DashboardActionItem {
   category: CisCategory | 'Licensing'
   cisRef?: string
   nistRef?: string
+  soc2Ref?: string
+  isoRef?: string
   status: 'fail' | 'warn'
   remediationId?: CisRemediationId
   remediationLabel?: string
@@ -57,6 +59,8 @@ export interface DashboardActionItem {
 export interface DashboardComplianceSummary {
   cisScorePct: number
   nistScorePct: number
+  soc2ScorePct: number
+  isoScorePct: number
   passed: number
   failed: number
   warned: number
@@ -125,6 +129,8 @@ export const getDashboardDataFn = createServerFn({ method: 'GET' }).handler(
     let compliance: DashboardComplianceSummary = {
       cisScorePct: 0,
       nistScorePct: 0,
+      soc2ScorePct: 0,
+      isoScorePct: 0,
       passed: 0,
       failed: 0,
       warned: 0,
@@ -157,6 +163,8 @@ export const getDashboardDataFn = createServerFn({ method: 'GET' }).handler(
           compliance = {
             cisScorePct: sum.scorePct,
             nistScorePct: sum.scorePct,
+            soc2ScorePct: sum.scorePct,
+            isoScorePct: sum.scorePct,
             passed: sum.passed,
             failed: sum.failed,
             warned: sum.warned,
@@ -177,6 +185,8 @@ export const getDashboardDataFn = createServerFn({ method: 'GET' }).handler(
                 category: c.category,
                 cisRef: c.cisRef,
                 nistRef: c.nistRef,
+                soc2Ref: c.soc2Ref,
+                isoRef: c.isoRef,
                 status: c.status,
                 remediationId: c.remediationId,
                 remediationLabel: c.remediationLabel,

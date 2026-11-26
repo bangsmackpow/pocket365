@@ -88,7 +88,11 @@ describe('CIS Microsoft 365 Benchmarks Evaluator', () => {
     expect(byId.get('global_admin_count')?.status).toBe('fail')
     expect(byId.get('admin_mfa')?.status).toBe('fail')
     expect(byId.get('security_defaults')?.nistRef).toContain('NIST AC.L2-3.1.1')
+    expect(byId.get('security_defaults')?.soc2Ref).toBe('SOC 2 CC6.1')
+    expect(byId.get('security_defaults')?.isoRef).toContain('ISO 27001:2022 A.5.15')
     expect(byId.get('admin_mfa')?.nistRef).toContain('NIST IA.L2-3.5.3')
+    expect(byId.get('admin_mfa')?.soc2Ref).toContain('SOC 2 CC6.1')
+    expect(byId.get('admin_mfa')?.isoRef).toContain('ISO 27001:2022 A.8.2')
   })
 
   it('scores 100% pass for a hardened tenant configuration', () => {
@@ -188,6 +192,8 @@ describe('CIS Microsoft 365 Benchmarks Evaluator', () => {
     expect(authCheck).toBeDefined()
     expect(authCheck?.status).toBe('warn')
     expect(authCheck?.nistRef).toContain('NIST IA.L2-3.5.3')
+    expect(authCheck?.soc2Ref).toBe('SOC 2 CC6.1')
+    expect(authCheck?.isoRef).toContain('ISO 27001:2022 A.8.5')
     expect(authCheck?.remediationId).toBe('enable_authenticator_context')
     expect(authCheck?.remediationLabel).toBe(
       '1-Click: Enable Authenticator App & Location Context',
