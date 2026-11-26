@@ -15,6 +15,7 @@ import {
   getClientIp,
   parseCookies,
 } from '~/server/http/proxy'
+import { getEffectiveEntraConfig } from '~/server/setup/service'
 
 function redirectWithClearOidc(path: string, request: Request): Response {
   const headers = new Headers({
@@ -82,13 +83,34 @@ export const Route = createFileRoute('/api/auth/callback')({
             }
           }
 
-          const role = resolveUserRole({
+          const effective = await getEffectiveEntraConfig()
+          let role = resolveUserRole({
             oid: identity.oid,
             preferredUsername: identity.preferredUsername,
             upn: identity.upn,
             email: identity.email,
             groups,
           })
+
+          // Merge D1 /setup wizard owner/admin lists when configured via browser wizard
+          if (!role && effective.source === 'd1_setup') {
+            const candidates = new Set(
+              [
+                identity.oid,
+                identity.preferredUsername,
+                identity.upn,
+                identity.email,
+                ...groups,
+              ]
+                .filter((v): v is string => Boolean(v))
+                .map((v) => v.toLowerCase()),
+            )
+            if (effective.ownerEntries.some((e) => candidates.has(e))) {
+              role = 'owner'
+            } else if (effective.adminEntries.some((e) => candidates.has(e))) {
+              role = 'admin'
+            }
+          }
 
           if (!role) {
             await recordAuditLog({

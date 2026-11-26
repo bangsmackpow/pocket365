@@ -1,10 +1,10 @@
 import crypto from 'node:crypto'
 import { eq, lt } from 'drizzle-orm'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
-import { getConfig } from '~/server/config'
 import { getDb } from '~/server/db'
 import { oidcStates } from '~/server/db/schema'
 import { buildCanonicalUrl, sanitizeReturnTo } from '~/server/http/proxy'
+import { getEffectiveEntraConfig } from '~/server/setup/service'
 
 const OIDC_STATE_TTL_MS = 10 * 60 * 1000 // 10 minutes
 
@@ -54,10 +54,14 @@ export async function createOidcLoginTransaction(
   returnToRaw?: string | null,
   request?: Request,
 ): Promise<OidcLoginInitResult> {
-  const cfg = getConfig()
-  if (!cfg.entraTenantId || !cfg.oidcClientId || !cfg.oidcClientSecret) {
+  const effective = await getEffectiveEntraConfig()
+  if (
+    !effective.entraTenantId ||
+    !effective.oidcClientId ||
+    !effective.oidcClientSecret
+  ) {
     throw new Error(
-      'OIDC is not configured. Set ENTRA_TENANT_ID, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET.',
+      'OIDC is not configured. Complete /setup or configure ENTRA_TENANT_ID, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET.',
     )
   }
 
@@ -88,11 +92,11 @@ export async function createOidcLoginTransaction(
     })
     .run()
 
-  const endpoints = getEntraEndpoints(cfg.entraTenantId)
+  const endpoints = getEntraEndpoints(effective.entraTenantId)
   const redirectUri = buildCanonicalUrl('/api/auth/callback', request)
 
   const params = new URLSearchParams({
-    client_id: cfg.oidcClientId,
+    client_id: effective.oidcClientId,
     response_type: 'code',
     redirect_uri: redirectUri,
     response_mode: 'query',
@@ -215,8 +219,12 @@ export async function completeOidcCallback(params: {
   cookieBindingToken: string
   request?: Request
 }): Promise<VerifiedOidcIdentity> {
-  const cfg = getConfig()
-  if (!cfg.entraTenantId || !cfg.oidcClientId || !cfg.oidcClientSecret) {
+  const effective = await getEffectiveEntraConfig()
+  if (
+    !effective.entraTenantId ||
+    !effective.oidcClientId ||
+    !effective.oidcClientSecret
+  ) {
     throw new Error('OIDC configuration is incomplete.')
   }
 
@@ -241,16 +249,19 @@ export async function completeOidcCallback(params: {
   }
 
   const providedHash = sha256Base64Url(params.cookieBindingToken)
-  if (!params.cookieBindingToken || !constantTimeEquals(providedHash, tx.cookieBindingHash)) {
+  if (
+    !params.cookieBindingToken ||
+    !constantTimeEquals(providedHash, tx.cookieBindingHash)
+  ) {
     throw new Error('OIDC browser binding cookie validation failed.')
   }
 
-  const endpoints = getEntraEndpoints(cfg.entraTenantId)
+  const endpoints = getEntraEndpoints(effective.entraTenantId)
   const redirectUri = buildCanonicalUrl('/api/auth/callback', params.request)
 
   const tokenBody = new URLSearchParams({
-    client_id: cfg.oidcClientId,
-    client_secret: cfg.oidcClientSecret,
+    client_id: effective.oidcClientId,
+    client_secret: effective.oidcClientSecret,
     grant_type: 'authorization_code',
     code: params.code,
     redirect_uri: redirectUri,
@@ -281,8 +292,8 @@ export async function completeOidcCallback(params: {
   const verified = await verifyEntraIdToken({
     idToken: tokenPayload.id_token,
     expectedNonce: tx.nonce,
-    tenantId: cfg.entraTenantId,
-    clientId: cfg.oidcClientId,
+    tenantId: effective.entraTenantId,
+    clientId: effective.oidcClientId,
   })
 
   return {

@@ -34,7 +34,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 function RootDocument() {
   const { queryClient, auth } = Route.useRouteContext()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const isLoginRoute = pathname === '/login'
+  const isStandaloneRoute = pathname === '/login' || pathname === '/setup'
 
   return (
     <html lang="en">
@@ -43,7 +43,7 @@ function RootDocument() {
       </head>
       <body className="min-h-screen bg-slate-50 text-slate-900">
         <QueryClientProvider client={queryClient}>
-          {auth.user && !isLoginRoute ? (
+          {auth.user && !isStandaloneRoute ? (
             <AppShell
               user={auth.user}
               deploymentMode={auth.deploymentMode}

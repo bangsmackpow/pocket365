@@ -1,5 +1,5 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
-import { AlertTriangle, CheckCircle2, Lock, ShieldCheck } from 'lucide-react'
+import { createFileRoute, Link, redirect } from '@tanstack/react-router'
+import { AlertTriangle, CheckCircle2, Lock, ShieldCheck, Wrench } from 'lucide-react'
 import { z } from 'zod'
 
 const loginSearchSchema = z.object({
@@ -54,13 +54,34 @@ function LoginPage() {
             <div>
               <h1 className="text-xl font-bold tracking-tight">Pocket365</h1>
               <p className="text-xs text-slate-400">
-                Self-Hosted Single-Tenant Microsoft 365 Admin
+                {auth.deploymentMode === 'saas'
+                  ? 'Pocket365 Cloud SaaS — Multi-Tenant MSP Console'
+                  : 'Self-Hosted Single-Tenant Microsoft 365 Admin'}
               </p>
             </div>
           </div>
         </div>
 
         <div className="p-8 space-y-6">
+          {auth.needsSetup && (
+            <div className="rounded-xl bg-indigo-50 border border-indigo-200 p-4 space-y-2">
+              <div className="flex items-center gap-2 text-sm font-semibold text-indigo-900">
+                <Wrench className="h-4 w-4 text-indigo-600 shrink-0" />
+                <span>First-Time Setup Required</span>
+              </div>
+              <p className="text-xs text-indigo-800 leading-relaxed">
+                This self-hosted Pocket365 Worker hasn&apos;t been linked to
+                Microsoft Entra ID yet. Run the browser setup wizard (includes a
+                1-click PowerShell bootstrap script).
+              </p>
+              <Link
+                to="/setup"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold"
+              >
+                Launch First-Run Setup Wizard →
+              </Link>
+            </div>
+          )}
           {errorMessage && (
             <div className="rounded-xl bg-rose-50 border border-rose-200 p-4 text-sm text-rose-800 space-y-1">
               <div className="flex items-center gap-2 font-semibold">

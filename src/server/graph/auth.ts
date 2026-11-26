@@ -4,6 +4,7 @@ import { getCloudflareEnv } from '~/server/cf/env'
 import { kvDelete, kvGetJson, kvPutJson } from '~/server/cf/kv'
 import { getConfig } from '~/server/config'
 import { decryptSecret, encryptSecret } from '~/server/security/crypto'
+import { getStoredEntraSetup } from '~/server/setup/service'
 
 interface CachedToken {
   accessToken: string
@@ -72,11 +73,41 @@ export class GraphTokenProvider {
     this.overrideCredentials = overrideCredentials
   }
 
-  private resolveCredentials(): TenantGraphCredentials {
+  private async resolveCredentialsAsync(): Promise<TenantGraphCredentials> {
     if (this.overrideCredentials) {
       return this.overrideCredentials
     }
     const cfg = getConfig()
+    if (
+      cfg.entraTenantId &&
+      cfg.graphClientId &&
+      (cfg.graphClientSecret ||
+        (cfg.graphCertThumbprint && cfg.graphCertPrivateKey))
+    ) {
+      return {
+        entraTenantId: cfg.entraTenantId,
+        clientId: cfg.graphClientId,
+        clientSecret: cfg.graphClientSecret,
+        certThumbprint: cfg.graphCertThumbprint,
+        certPrivateKey: cfg.graphCertPrivateKey,
+      }
+    }
+
+    const stored = await getStoredEntraSetup()
+    if (stored && stored.entraTenantId) {
+      return {
+        entraTenantId: stored.entraTenantId,
+        clientId: stored.graphClientId || stored.oidcClientId,
+        clientSecret: stored.graphClientSecretEnc
+          ? decryptSecret(stored.graphClientSecretEnc)
+          : undefined,
+        certThumbprint: stored.graphCertThumbprint || undefined,
+        certPrivateKey: stored.graphCertPrivateKeyEnc
+          ? decryptSecret(stored.graphCertPrivateKeyEnc)
+          : undefined,
+      }
+    }
+
     return {
       entraTenantId: cfg.entraTenantId,
       clientId: cfg.graphClientId,
@@ -94,10 +125,11 @@ export class GraphTokenProvider {
   public invalidate(): void {
     this.cache = null
     if (getCloudflareEnv().POCKET365_KV) {
-      const creds = this.resolveCredentials()
-      if (creds.entraTenantId && creds.clientId) {
-        void kvDelete(this.getKvCacheKey(creds))
-      }
+      void this.resolveCredentialsAsync().then((creds) => {
+        if (creds.entraTenantId && creds.clientId) {
+          return kvDelete(this.getKvCacheKey(creds))
+        }
+      })
     }
   }
 
@@ -112,7 +144,7 @@ export class GraphTokenProvider {
 
     // Check Cloudflare KV shared token cache across edge isolates (encrypted at rest)
     if (!forceRefresh && getCloudflareEnv().POCKET365_KV) {
-      const creds = this.resolveCredentials()
+      const creds = await this.resolveCredentialsAsync()
       if (creds.entraTenantId && creds.clientId) {
         const kvHit = await kvGetJson<EncryptedKvToken>(this.getKvCacheKey(creds))
         if (kvHit && kvHit.expiresAt - REFRESH_MARGIN_MS > Date.now()) {
@@ -139,7 +171,7 @@ export class GraphTokenProvider {
   }
 
   private async acquireToken(): Promise<string> {
-    const creds = this.resolveCredentials()
+    const creds = await this.resolveCredentialsAsync()
 
     if (!creds.entraTenantId || !creds.clientId) {
       throw new Error(

@@ -55,7 +55,17 @@ Authenticate using either an **X.509 Certificate** (`GRAPH_CERT_THUMBPRINT` + `G
 
 ## 2. Deploy to Cloudflare Workers
 
-### A. Provision Cloudflare Resources
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/bangsmackpow/pocket365)
+
+### Option A — 1-Click Self-Hosted Browser Setup (`/setup`)
+1. Click **Deploy to Cloudflare** (or run `npm run deploy` after provisioning D1, KV, and R2).
+2. Set just two Cloudflare Worker secrets (`SESSION_SECRET`, `DATA_ENCRYPTION_KEY`) and optional `SETUP_BOOTSTRAP_TOKEN`.
+3. Open `https://<your-worker-url>/setup` in your browser:
+   - Copy & run the generated **1-Click PowerShell Bootstrap Script** to automatically create your Entra App Registration and grant Graph permissions.
+   - Paste the single-line JSON output back into `/setup` to auto-fill all fields.
+   - Click **Test Graph Connection**, then **Save & Lock Setup** (credentials are stored in D1 encrypted with key-versioned `enc:v2` AES-256-GCM).
+
+### Option B — CLI Provisioning & Wrangler Secrets
 ```bash
 npm install
 
