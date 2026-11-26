@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resetConfigCache } from '~/server/config'
 import { closeTestDb, initDbForTesting } from '~/server/db/test-d1'
+import { getCanonicalBaseUrl } from '~/server/http/proxy'
 import {
   decryptSecret,
   encryptSecret,
@@ -99,5 +100,22 @@ describe('Phase CF-3 Self-Hosted /setup Wizard & Key-Versioned enc:v2 Rotation',
     expect(script).toContain('https://m365.contoso.workers.dev/api/auth/callback')
     expect(script).toContain('User.ReadWrite.All')
     expect(script).toContain('ConvertTo-Json -Compress')
+  })
+
+  it('automatically detects live custom HTTPS domain from incoming request over fallback APP_BASE_URL', () => {
+    const customReq = new Request('https://pocket365.builtbyvets.app/setup')
+    expect(getCanonicalBaseUrl(customReq)).toBe(
+      'https://pocket365.builtbyvets.app',
+    )
+
+    const script = generatePowerShellBootstrapScript(
+      getCanonicalBaseUrl(customReq),
+    )
+    expect(script).toContain(
+      'https://pocket365.builtbyvets.app/api/auth/callback',
+    )
+
+    // Without a request (e.g. cron/background), falls back to APP_BASE_URL
+    expect(getCanonicalBaseUrl()).toBe('https://m365.contoso.workers.dev')
   })
 })

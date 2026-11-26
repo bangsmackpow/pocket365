@@ -62,16 +62,39 @@ export function isSecureRequest(request?: Request): boolean {
 }
 
 /**
- * Returns the canonical external base URL for OIDC redirects and post-login/logout URLs.
- * Prefers APP_BASE_URL; falls back to X-Forwarded-Proto + X-Forwarded-Host when needed.
+ * Returns the canonical external base URL for OIDC redirects, setup scripts,
+ * and post-login/logout URLs.
+ *
+ * Automatically detects the live HTTPS request origin (e.g. when a custom domain
+ * like `https://pocket365.builtbyvets.app` is attached in Cloudflare Workers),
+ * falling back to `APP_BASE_URL` for non-HTTPS/background contexts.
  */
 export function getCanonicalBaseUrl(request?: Request): string {
+  if (request) {
+    const forwardedProto = getForwardedProto(request)
+    const forwardedHost = getForwardedHost(request)
+    if (forwardedProto === 'https' && forwardedHost) {
+      return `https://${forwardedHost}`.replace(/\/+$/, '')
+    }
+
+    try {
+      const parsed = new URL(request.url)
+      if (parsed.protocol === 'https:' && parsed.host) {
+        return parsed.origin.replace(/\/+$/, '')
+      }
+    } catch {
+      // Ignore malformed request URL
+    }
+  }
+
   const cfg = getConfig()
   if (cfg.appBaseUrl) {
     return cfg.appBaseUrl
   }
+
   const proto = getForwardedProto(request) || 'http'
-  const host = getForwardedHost(request) || request?.headers.get('host') || 'localhost:3000'
+  const host =
+    getForwardedHost(request) || request?.headers.get('host') || 'localhost:3000'
   return `${proto}://${host}`.replace(/\/+$/, '')
 }
 
