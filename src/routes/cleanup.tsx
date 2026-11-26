@@ -2,14 +2,20 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link, redirect } from '@tanstack/react-router'
 import {
   AlertTriangle,
+  CheckCircle2,
   Download,
+  FileCheck2,
   Info,
   RefreshCw,
   Search,
+  ShieldCheck,
   UserX,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { getStaleAccountsAuditFn } from '~/server/functions/apps'
+import {
+  certifyUserAccessReviewFn,
+  getStaleAccountsAuditFn,
+} from '~/server/functions/apps'
 import { enqueueBulkToggleUsersFn } from '~/server/functions/users'
 
 export const Route = createFileRoute('/cleanup')({
@@ -38,8 +44,15 @@ function StaleCleanupPage() {
   const { auth } = Route.useRouteContext()
   const isAdmin = auth.user?.role === 'admin'
 
-  const [staleDays, setStaleDays] = useState(30)
-  const [filter, setFilter] = useState<CleanupFilter>('disabled_with_license')
+  const [activeTab, setActiveTab] = useState<'uar' | 'cleanup'>('uar')
+  const [staleDays, setStaleDays] = useState(90)
+  const [attestationNotes, setAttestationNotes] = useState('')
+  const [lastUar, setLastUar] = useState<{
+    id: string
+    r2Key: string
+    certifiedAt: string
+  } | null>(null)
+  const [filter, setFilter] = useState<CleanupFilter>('all')
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [banner, setBanner] = useState<{
@@ -50,6 +63,30 @@ function StaleCleanupPage() {
   const query = useQuery({
     queryKey: ['stale-cleanup', staleDays],
     queryFn: () => getStaleAccountsAuditFn({ data: { staleDays } }),
+  })
+
+  const uarMutation = useMutation({
+    mutationFn: () =>
+      certifyUserAccessReviewFn({
+        data: { staleDays, attestationNotes: attestationNotes.trim() || undefined },
+      }),
+    onSuccess: (res) => {
+      setLastUar({
+        id: res.id,
+        r2Key: res.r2Key,
+        certifiedAt: res.certifiedAt,
+      })
+      setBanner({
+        type: 'success',
+        text: `Successfully certified User Access Review (UAR #${res.id.slice(0, 8)}). Immutable audit record archived to R2.`,
+      })
+    },
+    onError: (err) => {
+      setBanner({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Failed to certify access review.',
+      })
+    },
   })
 
   const bulkDisableMutation = useMutation({
@@ -139,15 +176,45 @@ function StaleCleanupPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            Stale Users, License Waste & Guest Cleanup
-          </h1>
-          <p className="text-sm text-slate-600">
-            Spot disabled accounts still consuming paid M365 licenses, inactive
-            users, and stale external guests (#EXT#).
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+              User Access Reviews & Identity Governance
+            </h1>
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <ShieldCheck className="h-3 w-3" /> SOC 2 CC6.2 / ISO A.5.18
+            </span>
+          </div>
+          <p className="text-sm text-slate-600 mt-1">
+            Conduct periodic quarterly access certifications, spot inactive accounts, and reclaim unused paid licenses.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Tab Switcher */}
+          <div className="inline-flex items-center rounded-xl bg-slate-100 p-1 text-xs font-semibold text-slate-600">
+            <button
+              type="button"
+              onClick={() => setActiveTab('uar')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                activeTab === 'uar'
+                  ? 'bg-white text-slate-900 shadow-xs font-bold'
+                  : 'hover:text-slate-900'
+              }`}
+            >
+              Quarterly Review (UAR)
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('cleanup')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                activeTab === 'cleanup'
+                  ? 'bg-white text-slate-900 shadow-xs font-bold'
+                  : 'hover:text-slate-900'
+              }`}
+            >
+              Stale Account Cleanup
+            </button>
+          </div>
+
           <button
             type="button"
             disabled={filtered.length === 0}
@@ -233,6 +300,63 @@ function StaleCleanupPage() {
             value={String(summary.totalUsers)}
             sub="Directory accounts"
           />
+        </div>
+      )}
+
+      {activeTab === 'uar' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <FileCheck2 className="h-5 w-5 text-indigo-600" />
+                <h2 className="text-base font-bold text-slate-900">
+                  Periodic User Access Certification (SOC 2 & ISO 27001)
+                </h2>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Auditors require documented recertification of directory accounts, privileged administrator rights, and external guests.
+              </p>
+            </div>
+            {lastUar && (
+              <a
+                href={`/api/exports/download?key=${encodeURIComponent(lastUar.r2Key)}`}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100"
+              >
+                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                Download Attestation Pack (JSON)
+              </a>
+            )}
+          </div>
+
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-slate-700 space-y-2">
+            <span className="font-bold text-slate-900 uppercase tracking-wider text-[10px] bg-slate-200 px-2 py-0.5 rounded">
+              Formal Attestation Statement
+            </span>
+            <blockquote className="italic border-l-2 border-indigo-600 pl-3 py-0.5">
+              "I certify that I have reviewed the active workforce users, privileged directory administrators, and external guest accounts for this organization, and verified that access permissions adhere to the principle of least privilege in accordance with SOC 2 CC6.2, CC6.3 and ISO/IEC 27001:2022 A.5.18."
+            </blockquote>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              type="text"
+              placeholder="Attestation notes or reference ticket (e.g. Q4-2026-UAR-AUDIT-01)"
+              value={attestationNotes}
+              onChange={(e) => setAttestationNotes(e.target.value)}
+              className="flex-1 min-w-[260px] px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            {isAdmin && (
+              <button
+                type="button"
+                disabled={uarMutation.isPending}
+                onClick={() => uarMutation.mutate()}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 cursor-pointer shadow-xs"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                {uarMutation.isPending ? 'Certifying & Archiving to R2...' : 'Certify & Sign Review'}
+              </button>
+            )}
+          </div>
         </div>
       )}
 

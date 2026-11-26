@@ -7,6 +7,7 @@ import {
   ClipboardCheck,
   Download,
   ExternalLink,
+  FileCheck2,
   Printer,
   RefreshCw,
   Wrench,
@@ -142,6 +143,37 @@ function CisBenchmarksPage() {
     URL.revokeObjectURL(url)
   }
 
+  const exportEvidenceJson = () => {
+    const checks = scanQuery.data?.checks ?? []
+    const summary = scanQuery.data?.summary
+    const history = scanQuery.data?.history ?? []
+    const payload = {
+      app: 'Pocket365',
+      exportType: 'Auditor Evidence Package',
+      frameworks: [
+        'CIS Microsoft 365 Foundations',
+        'NIST SP 800-171 Rev 2 / CSF 2.0',
+        'SOC 2 Type II (CC6/CC7)',
+        'ISO/IEC 27001:2022',
+      ],
+      generatedAt: new Date().toISOString(),
+      summary,
+      checks,
+      observationHistory: history,
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json;charset=utf-8;',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `pocket365-audit-evidence-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
   const filteredChecks = useMemo(() => {
     const list = scanQuery.data?.checks ?? []
     return list.filter((c) => {
@@ -243,6 +275,15 @@ function CisBenchmarksPage() {
           >
             <Download className="h-3.5 w-3.5" />
             Export CSV
+          </button>
+          <button
+            type="button"
+            disabled={!scanQuery.data?.checks.length}
+            onClick={exportEvidenceJson}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 cursor-pointer"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Auditor Evidence (JSON)
           </button>
           <button
             type="button"
@@ -369,25 +410,52 @@ function CisBenchmarksPage() {
         </select>
       </div>
 
-      {/* CIS Score History Trend */}
+      {/* Compliance History & Observation Window Timeline */}
       {(scanQuery.data?.history?.length ?? 0) > 0 && (
-        <section className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-2">
-          <div className="text-xs font-semibold text-slate-700">
-            CIS Compliance History (SQLite Snapshots)
+        <section className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <FileCheck2 className="h-4 w-4 text-indigo-600" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  Continuous Compliance Timeline & Audit Observations
+                </h3>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Proof of continuous posture operation over time for SOC 2 Type II (CC7.2) and ISO/IEC 27001:2022 (A.8.16).
+              </p>
+            </div>
+            <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
+              {scanQuery.data!.history.length} snapshot(s) archived
+            </span>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {scanQuery.data!.history.slice(0, 8).map((h) => (
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 pt-1">
+            {scanQuery.data!.history.map((h, idx) => (
               <div
                 key={h.id}
-                className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs flex items-center gap-2"
+                className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/80 text-xs space-y-1.5"
               >
-                <span className="font-bold text-indigo-700">{h.scorePct}%</span>
-                <span className="text-slate-500">
-                  ({h.passed}P / {h.failed}F)
-                </span>
-                <span className="text-[11px] text-slate-400">
-                  {new Date(h.createdAt).toLocaleDateString()}
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="font-extrabold text-sm text-indigo-700">
+                    {h.scorePct}%
+                  </span>
+                  <span className="text-[10px] uppercase font-bold text-slate-400">
+                    {idx === 0 ? 'Latest' : `T-${idx}`}
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-600 flex items-center justify-between">
+                  <span>
+                    <strong className="text-emerald-700">{h.passed}</strong> pass •{' '}
+                    <strong className="text-rose-700">{h.failed}</strong> fail
+                  </span>
+                  <span className="text-slate-400 font-mono text-[10px]">
+                    {new Date(h.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-400 truncate">
+                  By: {h.actorUpn}
+                </div>
               </div>
             ))}
           </div>

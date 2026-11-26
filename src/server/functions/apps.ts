@@ -1,9 +1,12 @@
+import crypto from 'node:crypto'
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { z } from 'zod'
 import { requireRole, requireSession } from '~/server/auth/guards'
+import { putExportObject } from '~/server/cf/r2'
 import { recordAuditLog } from '~/server/db/audit'
 import { getGraphClient } from '~/server/graph/client'
+import { buildOrgExportKey } from '~/server/orgs/service'
 import {
   analyzeAppCredentials,
   analyzeOAuthGrants,
@@ -194,5 +197,107 @@ export const getStaleAccountsAuditFn = createServerFn({ method: 'GET' })
         },
         error: classifyGraphError(err, ['User.ReadWrite.All', 'AuditLog.Read.All']),
       }
+    }
+  })
+
+const uarCertifySchema = z.object({
+  staleDays: z.number().int().min(7).max(365).default(90),
+  attestationNotes: z.string().max(500).optional(),
+})
+
+export const certifyUserAccessReviewFn = createServerFn({ method: 'POST' })
+  .validator((input: unknown) => uarCertifySchema.parse(input ?? {}))
+  .handler(async ({ data }) => {
+    const session = await requireRole('admin', undefined, 'uar.certify')
+    const graph = await getGraphClient()
+    const [{ users }, directoryRoles] = await Promise.all([
+      graph.listUsersForStaleAudit(250),
+      graph.listDirectoryRolesWithMembers().catch(() => []),
+    ])
+
+    const now = Date.now()
+    const id = crypto.randomUUID()
+    const ipAddress = getClientIp(getRequest())
+
+    const staleThresholdMs = now - data.staleDays * 86_400_000
+    const dormantUsers = users.filter((u) => {
+      const last = u.signInActivity?.lastSignInDateTime
+      if (!last) return false
+      return new Date(last).getTime() < staleThresholdMs
+    })
+
+    const guestAccounts = users.filter((u) => u.userType === 'Guest')
+    const globalAdmins =
+      directoryRoles
+        .find((r) => r.displayName === 'Global Administrator')
+        ?.members?.length ?? 0
+
+    const uarPayload = {
+      id,
+      organizationId: session.organizationId,
+      certifiedAt: new Date(now).toISOString(),
+      attestation: {
+        certifiedByUpn: session.upn,
+        certifiedByRole: session.role,
+        statement:
+          'I certify that I have reviewed the active workforce users, privileged directory administrators, and external guest accounts for this organization, and verified that access permissions adhere to the principle of least privilege in accordance with SOC 2 CC6.2, CC6.3 and ISO/IEC 27001:2022 A.5.18.',
+        notes:
+          data.attestationNotes ||
+          'Periodic Quarterly User Access Review completed.',
+      },
+      metrics: {
+        totalAccountsReviewed: users.length,
+        dormantAccountsIdentified: dormantUsers.length,
+        guestAccountsReviewed: guestAccounts.length,
+        globalAdminsCount: globalAdmins,
+        staleThresholdDays: data.staleDays,
+      },
+      privilegedRoles: directoryRoles.map((r) => ({
+        role: r.displayName,
+        memberCount: r.members?.length ?? 0,
+      })),
+    }
+
+    const r2Key = buildOrgExportKey(
+      session.organizationId,
+      'uar',
+      `uar-certification-${id}.json`,
+    )
+
+    await putExportObject({
+      key: r2Key,
+      body: JSON.stringify(uarPayload, null, 2),
+      contentType: 'application/json',
+      customMetadata: {
+        organizationId: session.organizationId,
+        certifiedBy: session.upn,
+        totalReviewed: String(users.length),
+      },
+    })
+
+    await recordAuditLog({
+      organizationId: session.organizationId,
+      actorOid: session.oid,
+      actorUpn: session.upn,
+      actorRole: session.role,
+      action: 'uar.certify',
+      target: id,
+      status: 'success',
+      details: {
+        r2Key,
+        totalAccountsReviewed: users.length,
+        dormantAccounts: dormantUsers.length,
+        notes: data.attestationNotes,
+      },
+      ipAddress,
+    })
+
+    return {
+      ok: true,
+      id,
+      r2Key,
+      certifiedAt: uarPayload.certifiedAt,
+      metrics: uarPayload.metrics,
+      attestation: uarPayload.attestation,
     }
   })
