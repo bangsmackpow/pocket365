@@ -4,6 +4,7 @@ import { getRequest } from '@tanstack/react-start/server'
 import { desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireRole, requireSession } from '~/server/auth/guards'
+import { requireEntitlement } from '~/server/billing/entitlements'
 import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
 import { policySnapshots } from '~/server/db/schema'
@@ -154,6 +155,7 @@ export const createCaSnapshotFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => createCaSnapshotSchema.parse(input))
   .handler(async ({ data }) => {
     const session = requireRole('admin', undefined, 'ca.create_snapshot')
+    requireEntitlement('posture.ca_drift', session)
     const ipAddress = getClientIp(getRequest())
     const graph = getGraphClient()
     const policies = await graph.listConditionalAccessPoliciesFull()
@@ -328,6 +330,7 @@ export const revealBitlockerKeyFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => revealBitlockerSchema.parse(input))
   .handler(async ({ data }) => {
     const session = requireRole('admin', undefined, 'bitlocker.reveal_key')
+    requireEntitlement('posture.devices_bitlocker', session)
     const ipAddress = getClientIp(getRequest())
     const graph = getGraphClient()
 

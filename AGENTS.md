@@ -26,6 +26,7 @@ This file documents the architecture, conventions, security invariants, and veri
 - `src/server/db/` — Drizzle schema (`schema.ts`), WAL SQLite singleton (`index.ts`), startup auto-migrator (`migrate.ts`), `audit.ts`, `settings.ts`.
 - `src/server/graph/` — App-only Graph token provider (`auth.ts`), Graph v1.0 client with `429 Retry-After` backoff (`client.ts`), SQLite async job runner (`jobs.ts`), AADSTS error diagnosis (`signin-errors.ts`), CIS benchmark evaluator (`cis-benchmarks.ts`, `cis-scanner.ts`), live DNS email auth (`dns-email-auth.ts`), and pure analysis helpers (`mfa-helpers.ts`, `insights-helpers.ts`).
 - `src/server/alerts/` — Automated security & drift alert engine (`engine.ts`) with Teams/Slack/Discord/Generic webhooks and 24h deduplication.
+- `src/server/billing/` — Commercial tier catalog & server-side `requireEntitlement(...)` (`entitlements.ts`), offline Ed25519-signed license key verification/issuance, and Stripe HMAC-SHA256 webhook verification (`stripe-webhook.ts`).
 - `src/server/functions/` — TanStack Start `createServerFn` RPC endpoints. **Important:** Keep `src/server/functions/*.ts` files exporting *only* `createServerFn` functions (and TypeScript types) so Vite's client build cleanly strips all server/Node imports with zero browser-externalization warnings.
 - `src/routes/` — File-based UI pages and raw HTTP API routes (`src/routes/api/`).
 
@@ -43,8 +44,8 @@ This file documents the architecture, conventions, security invariants, and veri
 ## 4. Phase Status
 - **Phase 1 (Complete):** Core single-tenant M365 console, Entra OIDC + PKCE, Sign-in Logs, MFA Coverage, 24 CIS Benchmarks + 16 1-click fixes + history, Privileged Roles, Directory Audits, Users/Offboarding/Onboarding, Groups, Mailbox BEC Sweep & Auto-Reply, Apps/OAuth, Stale Cleanup, CA Drift, Devices/BitLocker, Alerts.
 - **Phase 2 (Complete):** Layered rate limiting, CSRF & HTTP security headers, AES-256-GCM secret encryption, webhook SSRF protection, CSV formula neutralization, 5-tier granular RBAC (`owner`, `admin`, `helpdesk`, `security_auditor`, `viewer`), active session management UI (`/security`), CI dependency audit.
-- **Phase 3 (Next):** Commercial tiering (`community` / `pro` / `enterprise`), server-side `requireEntitlement(...)`, offline Ed25519-signed license keys + Stripe webhook readiness, `/billing` UI.
-- **Phase 4 (Planned):** Multi-tenant MSP/SaaS architecture (`managed_tenants`, per-tenant Graph token isolation, 1-click Admin Consent onboarding, Global Tenant Switcher, `/tenants` command center, cross-tenant CIS/MFA overview, PostgreSQL migration readiness).
+- **Phase 3 (Complete):** Commercial tiering (`community` / `pro` / `enterprise`), server-side `requireEntitlement(...)` (`402 Payment Required`), offline Ed25519-signed license keys, Stripe HMAC webhook sync (`/api/billing/webhook`), and `/billing` UI.
+- **Phase 4 (Next):** Multi-tenant MSP/SaaS architecture (`managed_tenants`, per-tenant Graph token isolation, 1-click Admin Consent onboarding, Global Tenant Switcher, `/tenants` command center, cross-tenant CIS/MFA overview, PostgreSQL migration readiness).
 
 ---
 

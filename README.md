@@ -19,6 +19,9 @@ Designed for clean container deployment via **GitHub Actions → GHCR → Portai
   - Sliding-window **rate limiting** (`429 Too Many Requests` + `Retry-After`) across auth (`20/10m`), API (`180/m`), mutations (`60/m`), and heavy sweeps (`8/5m`), using `TRUSTED_PROXY_HOPS`-aware client IP extraction.
   - **CSRF protection** (`Origin` + `Sec-Fetch-Site`), hardened **HTTP security headers** (CSP, `X-Frame-Options: DENY`, `nosniff`, HSTS), **AES-256-GCM encryption** for stored webhook URLs, **SSRF blocking** on outbound webhooks, and **CSV formula injection** protection.
   - **Active Sessions Center (`/security`):** Idle + absolute session timeouts, view live SQLite sessions, and revoke individual or all other sessions.
+- **Commercial Tiering & Licensing (`/billing`):**
+  - Supports **Community**, **Pro**, and **Enterprise** tiers enforced server-side via `requireEntitlement(...)` (`HTTP 402` when `LICENSE_ENFORCEMENT=strict`; defaults to `off` for open self-hosted deployments).
+  - Supports **offline Ed25519-signed JWT license keys** (`LICENSE_PUBLIC_KEY`) as well as **Stripe webhook subscription sync** (`POST /api/billing/webhook`).
 - **App-Only Microsoft Graph Client:** Supports **Client Secret** or **X.509 Certificate (`RS256` + `x5t`)** authentication, token caching, automatic 401 refresh, and `429 Too Many Requests` (`Retry-After`) + `503`/`504` exponential backoff.
 - **SQLite Persistence & Async Job Runner:** Stored at `/data/pocket365.db` (defaults to `./data/pocket365.db` locally) with WAL mode, auto-migrations on startup, server-side sessions, audit log, runtime settings, and background bulk job execution.
 - **Reverse Proxy Ready:** Respects `X-Forwarded-Proto`, `X-Forwarded-Host`, and `X-Forwarded-For`, uses `APP_BASE_URL` for OIDC redirect URIs, and sets `HttpOnly`, `Secure`, `SameSite=Lax` cookies automatically over HTTPS.

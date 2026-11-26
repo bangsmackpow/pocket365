@@ -4,6 +4,7 @@ import { getRequest } from '@tanstack/react-start/server'
 import { desc } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireRole, requireSession } from '~/server/auth/guards'
+import { requireEntitlement } from '~/server/billing/entitlements'
 import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
 import { cisSnapshots } from '~/server/db/schema'
@@ -136,6 +137,7 @@ export const applyCisRemediationFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => remediationSchema.parse(input))
   .handler(async ({ data }) => {
     const session = requireRole('admin', undefined, `cis.remediate:${data.remediationId}`)
+    requireEntitlement('cis.autofix', session)
     const ipAddress = getClientIp(getRequest())
     const graph = getGraphClient()
 

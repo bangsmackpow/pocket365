@@ -180,6 +180,23 @@ export const onboardingTemplates = sqliteTable('onboarding_templates', {
   updatedAt: integer('updated_at').notNull(),
 })
 
+export type PlanTier = 'community' | 'pro' | 'enterprise'
+
+export const licenseState = sqliteTable('license_state', {
+  id: text('id').primaryKey(),
+  source: text('source').notNull(), // 'env' | 'license_key' | 'stripe'
+  tier: text('tier').$type<PlanTier>().notNull(),
+  licensee: text('licensee').notNull().default('Self-Hosted'),
+  licenseKeyEnc: text('license_key_enc'),
+  stripeCustomerId: text('stripe_customer_id'),
+  stripeSubscriptionId: text('stripe_subscription_id'),
+  maxTenants: integer('max_tenants').notNull().default(1),
+  maxUsers: integer('max_users').notNull().default(50),
+  expiresAt: integer('expires_at'),
+  updatedBy: text('updated_by').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
+
 export type SessionRow = typeof sessions.$inferSelect
 export type AuditLogRow = typeof auditLogs.$inferSelect
 export type JobRow = typeof jobs.$inferSelect
@@ -189,3 +206,4 @@ export type CisSnapshotRow = typeof cisSnapshots.$inferSelect
 export type AlertWebhookRow = typeof alertWebhooks.$inferSelect
 export type AlertEventRow = typeof alertEvents.$inferSelect
 export type OnboardingTemplateRow = typeof onboardingTemplates.$inferSelect
+export type LicenseStateRow = typeof licenseState.$inferSelect

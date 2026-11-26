@@ -26,6 +26,13 @@ export interface Pocket365Config {
   graphCertPrivateKey: string
   graphMaxRetries: number
   graphBaseBackoffMs: number
+  licenseEnforcement: 'off' | 'strict'
+  defaultTier: 'community' | 'pro' | 'enterprise'
+  licensePublicKeyPem: string
+  licenseKey: string
+  stripeWebhookSecret: string
+  stripePricePro: string
+  stripePriceEnterprise: string
 }
 
 export interface ConfigReadiness {
@@ -125,6 +132,25 @@ export function getConfig(): Pocket365Config {
     30000,
   )
 
+  const licenseEnforcement =
+    (env.LICENSE_ENFORCEMENT || '').trim().toLowerCase() === 'strict'
+      ? 'strict'
+      : 'off'
+  const rawTier = (env.POCKET365_TIER || '').trim().toLowerCase()
+  const defaultTier: 'community' | 'pro' | 'enterprise' =
+    rawTier === 'community' || rawTier === 'pro' || rawTier === 'enterprise'
+      ? rawTier
+      : licenseEnforcement === 'strict'
+        ? 'community'
+        : 'enterprise'
+  const licensePublicKeyPem = (env.LICENSE_PUBLIC_KEY || '')
+    .trim()
+    .replace(/\\n/g, '\n')
+  const licenseKey = (env.POCKET365_LICENSE_KEY || '').trim()
+  const stripeWebhookSecret = (env.STRIPE_WEBHOOK_SECRET || '').trim()
+  const stripePricePro = (env.STRIPE_PRICE_PRO || '').trim()
+  const stripePriceEnterprise = (env.STRIPE_PRICE_ENTERPRISE || '').trim()
+
   cachedConfig = {
     port,
     host,
@@ -150,6 +176,13 @@ export function getConfig(): Pocket365Config {
     graphCertPrivateKey,
     graphMaxRetries,
     graphBaseBackoffMs,
+    licenseEnforcement,
+    defaultTier,
+    licensePublicKeyPem,
+    licenseKey,
+    stripeWebhookSecret,
+    stripePricePro,
+    stripePriceEnterprise,
   }
 
   return cachedConfig

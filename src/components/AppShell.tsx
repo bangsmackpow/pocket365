@@ -4,6 +4,7 @@ import {
   AppWindow,
   Bell,
   ClipboardCheck,
+  CreditCard,
   Crown,
   KeyRound,
   LayoutDashboard,
@@ -51,6 +52,7 @@ const NAV_ITEMS = [
   { to: '/posture', label: 'Posture & Devices', icon: Radar },
   { to: '/alerts', label: 'Alerts', icon: Bell },
   { to: '/security', label: 'Security & Sessions', icon: Lock },
+  { to: '/billing', label: 'Plan & Licensing', icon: CreditCard },
   { to: '/audit', label: 'Audit & Jobs', icon: Activity },
 ] as const
 

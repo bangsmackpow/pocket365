@@ -3,6 +3,7 @@ import { getRequest } from '@tanstack/react-start/server'
 import { desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireCapability, requireRole, requireSession } from '~/server/auth/guards'
+import { requireEntitlement } from '~/server/billing/entitlements'
 import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
 import { jobs } from '~/server/db/schema'
@@ -197,6 +198,7 @@ export const enqueueMailboxBecSweepFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => becSweepSchema.parse(input ?? {}))
   .handler(async ({ data }) => {
     const session = requireCapability('audit.sweep', undefined, 'mailbox.bec_sweep')
+    requireEntitlement('mailboxes.bec_sweep', session)
     enforceRateLimit('heavy', session.oid)
     const job = enqueueJob({
       type: 'mailbox.bec_sweep',

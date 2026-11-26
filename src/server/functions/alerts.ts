@@ -9,6 +9,7 @@ import {
   runAutomatedAlertChecks,
 } from '~/server/alerts/engine'
 import { requireRole, requireSession } from '~/server/auth/guards'
+import { requireEntitlement } from '~/server/billing/entitlements'
 import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
 import { alertEvents, alertWebhooks } from '~/server/db/schema'
@@ -77,6 +78,7 @@ export const addAlertWebhookFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => createWebhookSchema.parse(input))
   .handler(async ({ data }) => {
     const session = requireRole('admin', undefined, 'alerts.add_webhook')
+    requireEntitlement('alerts.webhooks', session)
     await assertSafeWebhookUrl(data.url.trim())
 
     const db = getDb()

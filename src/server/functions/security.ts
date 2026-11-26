@@ -2,6 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { z } from 'zod'
 import { requireCapability, requireRole, requireSession } from '~/server/auth/guards'
+import { requireEntitlement } from '~/server/billing/entitlements'
 import { recordAuditLog } from '~/server/db/audit'
 import {
   getGraphClient,
@@ -280,6 +281,7 @@ export const enqueueUserOffboardingFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => offboardUserSchema.parse(input))
   .handler(async ({ data }) => {
     const session = requireRole('admin', undefined, 'user.offboard')
+    requireEntitlement('users.offboarding', session)
     enforceRateLimit('heavy', session.oid)
     if (
       !data.disableAccount &&

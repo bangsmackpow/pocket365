@@ -4,6 +4,7 @@ import { getRequest } from '@tanstack/react-start/server'
 import { desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireRole, requireSession } from '~/server/auth/guards'
+import { requireEntitlement } from '~/server/billing/entitlements'
 import { getDb } from '~/server/db'
 import { recordAuditLog } from '~/server/db/audit'
 import { onboardingTemplates } from '~/server/db/schema'
@@ -202,6 +203,7 @@ export const onboardNewUserFn = createServerFn({ method: 'POST' })
   .validator((input: unknown) => onboardUserSchema.parse(input))
   .handler(async ({ data }) => {
     const session = requireRole('admin', undefined, 'user.onboard')
+    requireEntitlement('users.onboarding', session)
     const ipAddress = getClientIp(getRequest())
     const graph = getGraphClient()
 
