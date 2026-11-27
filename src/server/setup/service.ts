@@ -338,8 +338,10 @@ export function generatePowerShellBootstrapScript(appBaseUrl: string): string {
 
   Import-Module Microsoft.Graph.Authentication, Microsoft.Graph.Applications
 
-  Write-Host "Signing in to Microsoft Graph..." -ForegroundColor Cyan
-  Connect-MgGraph -Scopes "Application.ReadWrite.All","AppRoleAssignment.ReadWrite.All","Directory.Read.All"
+  # Disconnect any existing session and isolate token to this process only
+  Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
+  Write-Host "Signing in to Microsoft Graph (select the target organization's administrator)..." -ForegroundColor Cyan
+  Connect-MgGraph -Scopes "Application.ReadWrite.All","AppRoleAssignment.ReadWrite.All","Directory.Read.All" -ContextScope Process
 
   $ctx = Get-MgContext
   if (-not $ctx -or -not $ctx.TenantId) {
@@ -348,6 +350,7 @@ export function generatePowerShellBootstrapScript(appBaseUrl: string): string {
 
   $tenantId = $ctx.TenantId
   $redirectUri = "${redirectUri}"
+  Write-Host "Connected as $($ctx.Account) in tenant $tenantId" -ForegroundColor Green
 
   # 1. Create Single-Tenant Entra App Registration
   Write-Host "Creating Entra ID App Registration (Pocket365 Self-Hosted)..." -ForegroundColor Cyan
@@ -404,6 +407,9 @@ export function generatePowerShellBootstrapScript(appBaseUrl: string): string {
   Write-Host "=== COPY THIS JSON INTO POCKET365 /setup ===" -ForegroundColor Green
   Write-Host $setupBlob
   Write-Host "============================================" -ForegroundColor Green
+
+  # Clean up memory session
+  Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
 }
 `
 }
