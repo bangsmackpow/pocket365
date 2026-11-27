@@ -37,6 +37,8 @@ Deploy to **your own Cloudflare account** in `self_hosted` mode (Free single-ten
    - For `saas`: **Accounts in any organizational directory (Multitenant)**
 4. Redirect URI (Platform: **Web**):
    - `https://<your-worker-or-custom-domain>/api/auth/callback`
+   > [!IMPORTANT]
+   > The redirect URI MUST be registered under the **Web** platform and end with `/api/auth/callback`. This canonical URI handles both interactive user sign-ins and tenant Admin Consent onboarding. Omitting or altering it causes `AADSTS50011`.
 5. Copy **Directory (tenant) ID** → `ENTRA_TENANT_ID`, **Application (client) ID** → `OIDC_CLIENT_ID`, and create a client secret → `OIDC_CLIENT_SECRET`.
 6. *(Optional, recommended for group-based RBAC)* Under **Token configuration**, add the **Security groups** claim (Group ID).
 
@@ -50,6 +52,9 @@ Grant Microsoft Graph **Application permissions** and click **Grant admin consen
 - *(Optional P1/P2/Intune)* `Policy.ReadWrite.ConditionalAccess`, `DeviceManagementManagedDevices.ReadWrite.All`, `BitlockerKey.Read.All`, `IdentityRiskyUser.ReadWrite.All`
 
 Authenticate using either an **X.509 Certificate** (`GRAPH_CERT_THUMBPRINT` + `GRAPH_CERT_PRIVATE_KEY` secret — recommended) or a **Client Secret** (`GRAPH_CLIENT_SECRET`).
+
+> [!TIP]
+> If you are using a single unified App Registration for both interactive login and Graph API, you do not need to set `GRAPH_CLIENT_ID` or `GRAPH_CLIENT_SECRET` separately; Pocket365 automatically falls back to `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`.
 
 ---
 
@@ -139,7 +144,31 @@ How SaaS onboarding works with **zero customer client secrets**:
 
 ---
 
-## 5. GitHub Actions CI / CD
+## 5. Live Edge Observability & Troubleshooting
+
+Pocket365 emits structured diagnostic events directly into Cloudflare's edge logging pipeline.
+
+### A. Streaming Live Logs
+- **Cloudflare Dashboard:** Go to **Workers & Pages** → **`pocket365`** → **Observability** → **Logs** → click **Begin log stream**.
+- **Or via Wrangler CLI:**
+  ```bash
+  npx wrangler tail
+  ```
+
+### B. Structured Log Tags
+- `[Pocket365 Graph Auth]` — Emitted during token acquisition. Logs the target tenant ID, client ID, authentication mechanism (`hasSecret`, `hasCert`), and any HTTP error codes returned by Microsoft's token endpoint (`https://login.microsoftonline.com/<tenantId>/oauth2/v2.0/token`).
+- `[Pocket365 Tenant Test]` — Emitted when clicking **Test** on `/tenants`. Logs the tenant's connection mode, ID, and verified default domain on success, or the exact Graph error on failure.
+
+### C. Common Entra ID Errors & Fixes
+| Error Code | Meaning | Remediation |
+|---|---|---|
+| `AADSTS50011` | Redirect URI mismatch | Verify that `https://<domain>/api/auth/callback` is listed under the **Web** platform in your Azure Portal App Registration Redirect URIs. |
+| `AADSTS700016` | App not installed or consented in tenant | The customer tenant administrator has not yet granted consent. Use the 1-click **Grant Admin Consent** link generated on `/tenants`. |
+| `AADSTS65004` | User or administrator declined consent | Re-open the Admin Consent URL and have an Entra Global Administrator click **Accept**. |
+
+---
+
+## 6. GitHub Actions CI / CD
 
 [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml) runs `build`, `typecheck`, `lint`, `test`, and `npm audit --omit=dev --audit-level=high` on every PR and push to `main`.
 
