@@ -7,6 +7,7 @@ import { getDb } from '~/server/db'
 import {
   managedTenants,
   oidcStates,
+  organizations,
   sessions,
   tenantAccess,
   type ManagedTenantRow,
@@ -27,14 +28,64 @@ export async function ensurePrimaryTenantSeeded(
   organizationId = DEFAULT_ORG_ID,
 ): Promise<ManagedTenantRow | null> {
   const cfg = getConfig()
-  if (cfg.deploymentMode === 'saas' || organizationId !== DEFAULT_ORG_ID) {
-    return null
+  const db = getDb()
+
+  if (organizationId !== DEFAULT_ORG_ID) {
+    const org = await db
+      .select()
+      .from(organizations)
+      .where(eq(organizations.id, organizationId))
+      .get()
+    if (!org || !org.homeEntraTenantId) return null
+
+    const anyExisting = await db
+      .select()
+      .from(managedTenants)
+      .where(eq(managedTenants.organizationId, organizationId))
+      .all()
+
+    if (anyExisting.length > 0) {
+      return (
+        anyExisting.find((t) => t.isPrimary === 1) ||
+        anyExisting.find((t) => t.entraTenantId === org.homeEntraTenantId) ||
+        anyExisting[0] ||
+        null
+      )
+    }
+
+    const domainPart = org.ownerUpn.includes('@')
+      ? org.ownerUpn.split('@')[1]
+      : ''
+    const now = Date.now()
+    const row: ManagedTenantRow = {
+      id: crypto.randomUUID(),
+      organizationId,
+      entraTenantId: org.homeEntraTenantId,
+      displayName: org.name || (domainPart ? domainPart : `Tenant ${org.homeEntraTenantId.slice(0, 8)}`),
+      primaryDomain: domainPart || '',
+      connectionMode: 'admin_consent',
+      clientId: cfg.graphClientId || '',
+      clientSecretEnc: null,
+      certThumbprint: null,
+      certPrivateKeyEnc: null,
+      isPrimary: 1,
+      status: 'active',
+      lastHealthCheckAt: null,
+      lastHealthError: null,
+      lastCisScorePct: null,
+      lastMfaCoveragePct: null,
+      createdBy: org.ownerUpn || 'system:auto_org',
+      createdAt: now,
+      updatedAt: now,
+    }
+    await db.insert(managedTenants).values(row).run()
+    return row
   }
+
   const effective = await getEffectiveEntraConfig()
   const primaryTenantId = cfg.entraTenantId || effective.entraTenantId
   if (!primaryTenantId) return null
 
-  const db = getDb()
   const existing = await db
     .select()
     .from(managedTenants)

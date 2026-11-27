@@ -1,5 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { getCurrentSession } from '~/server/auth/guards'
+import { getActivePlan } from '~/server/billing/entitlements'
 import { getConfig } from '~/server/config'
 import {
   getEffectiveConfigReadiness,
@@ -13,9 +14,10 @@ import {
 export const getSessionFn = createServerFn({ method: 'GET' }).handler(async () => {
   const session = await getCurrentSession()
   const cfg = getConfig()
-  const [readiness, effective] = await Promise.all([
+  const [readiness, effective, plan] = await Promise.all([
     getEffectiveConfigReadiness(),
     getEffectiveEntraConfig(),
+    getActivePlan(session?.organizationId),
   ])
 
   const accessibleTenants = session
@@ -34,9 +36,12 @@ export const getSessionFn = createServerFn({ method: 'GET' }).handler(async () =
   const needsSetup =
     cfg.deploymentMode === 'self_hosted' && !readiness.oidcConfigured
 
+  const canManageTenants = plan.features.includes('tenants.multi_tenant')
+
   return {
     deploymentMode: cfg.deploymentMode,
     needsSetup,
+    canManageTenants,
     user: session
       ? {
           oid: session.oid,

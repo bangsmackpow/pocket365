@@ -48,6 +48,7 @@ interface AppShellProps {
   tenantIdHint: string | null
   activeTenantId?: string | null
   accessibleTenants?: TenantSwitcherOption[]
+  canManageTenants?: boolean
   children: ReactNode
 }
 
@@ -86,6 +87,7 @@ export function AppShell({
   tenantIdHint,
   activeTenantId,
   accessibleTenants = [],
+  canManageTenants = false,
   children,
 }: AppShellProps) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
@@ -93,7 +95,9 @@ export function AppShell({
   const queryClient = useQueryClient()
   const isAdmin = user.role === 'admin' || user.role === 'owner'
   const isSaas = deploymentMode === 'saas'
-  const visibleNavItems = isSaas
+  const showTenantsNav =
+    isSaas && (accessibleTenants.length > 1 || Boolean(canManageTenants))
+  const visibleNavItems = showTenantsNav
     ? NAV_ITEMS
     : NAV_ITEMS.filter((item) => item.to !== '/tenants')
 
@@ -125,8 +129,8 @@ export function AppShell({
             </div>
           </Link>
 
-          {/* Global Multi-Tenant Switcher (SaaS mode) */}
-          {isSaas && accessibleTenants.length > 0 && (
+          {/* Global Multi-Tenant Switcher / Tenant Display (SaaS mode) */}
+          {isSaas && accessibleTenants.length > 1 ? (
             <div className="space-y-1">
               <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1">
                 <Building2 className="h-3 w-3" />
@@ -146,7 +150,23 @@ export function AppShell({
                 ))}
               </select>
             </div>
-          )}
+          ) : isSaas && accessibleTenants.length === 1 && accessibleTenants[0] ? (
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1">
+                <Building2 className="h-3 w-3" />
+                Tenant
+              </div>
+              <div
+                className="px-2.5 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800 text-xs text-slate-200 font-medium truncate"
+                title={accessibleTenants[0].displayName}
+              >
+                {accessibleTenants[0].displayName}
+                {accessibleTenants[0].primaryDomain
+                  ? ` (${accessibleTenants[0].primaryDomain})`
+                  : ''}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-1">

@@ -130,11 +130,13 @@ export function getConfig(): Pocket365Config {
     30000,
   )
 
+  const rawEnforcement = (env('LICENSE_ENFORCEMENT') || '').trim().toLowerCase()
   const licenseEnforcement =
-    (env('LICENSE_ENFORCEMENT') || '').trim().toLowerCase() === 'strict' ||
-    deploymentMode === 'saas'
-      ? 'strict'
-      : 'off'
+    rawEnforcement === 'off'
+      ? 'off'
+      : rawEnforcement === 'strict' || deploymentMode === 'saas'
+        ? 'strict'
+        : 'off'
   const rawTier = (env('POCKET365_TIER') || '').trim().toLowerCase()
   const defaultTier: 'community' | 'pro' | 'enterprise' =
     rawTier === 'community' || rawTier === 'pro' || rawTier === 'enterprise'

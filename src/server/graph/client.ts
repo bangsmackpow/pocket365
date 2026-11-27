@@ -1,5 +1,9 @@
+import { eq } from 'drizzle-orm'
 import { getCurrentSession } from '~/server/auth/guards'
 import { getConfig } from '~/server/config'
+import { getDb } from '~/server/db'
+import { organizations } from '~/server/db/schema'
+import { DEFAULT_ORG_ID } from '~/server/orgs/service'
 import {
   getManagedTenantById,
   resolveActiveTenantForSession,
@@ -9,6 +13,7 @@ import {
   getGraphTokenProvider,
   GraphTokenProvider,
   type GraphTokenProvider as GraphTokenProviderType,
+  type TenantGraphCredentials,
 } from './auth'
 
 const GRAPH_BASE_URL = 'https://graph.microsoft.com/v1.0'
@@ -1628,6 +1633,41 @@ export async function getGraphClient(
     const client = new MicrosoftGraphClient({ tokenProvider: provider })
     tenantClients.set(cacheKey, client)
     return client
+  }
+
+  // Strict Organization Isolation: In SaaS mode or for any non-default organization,
+  // NEVER fall back to the host environment's primary Graph tenant (builtnetworks.com).
+  const cfg = getConfig()
+  if (cfg.deploymentMode === 'saas' && orgId !== DEFAULT_ORG_ID) {
+    if (tenantRow) {
+      const cacheKey = `${tenantRow.organizationId || orgId}:${tenantRow.id}`
+      const cached = tenantClients.get(cacheKey)
+      if (cached) return cached
+      const creds = resolveTenantGraphCredentials(tenantRow)
+      const provider = new GraphTokenProvider(fetch, creds)
+      const client = new MicrosoftGraphClient({ tokenProvider: provider })
+      tenantClients.set(cacheKey, client)
+      return client
+    }
+
+    const db = getDb()
+    const org = await db
+      .select()
+      .from(organizations)
+      .where(eq(organizations.id, orgId))
+      .get()
+    if (org && org.homeEntraTenantId) {
+      const creds: TenantGraphCredentials = {
+        organizationId: orgId,
+        entraTenantId: org.homeEntraTenantId,
+        clientId: cfg.graphClientId,
+        clientSecret: cfg.graphClientSecret || undefined,
+        certThumbprint: cfg.graphCertThumbprint || undefined,
+        certPrivateKey: cfg.graphCertPrivateKey || undefined,
+      }
+      const provider = new GraphTokenProvider(fetch, creds)
+      return new MicrosoftGraphClient({ tokenProvider: provider })
+    }
   }
 
   if (!defaultClient) {

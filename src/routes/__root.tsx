@@ -54,6 +54,7 @@ function RootDocument() {
               tenantIdHint={auth.tenantIdHint}
               activeTenantId={auth.activeTenantId}
               accessibleTenants={auth.accessibleTenants}
+              canManageTenants={auth.canManageTenants}
             >
               <Outlet />
             </AppShell>

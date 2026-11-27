@@ -242,7 +242,9 @@ export async function getActivePlan(
 
   const rawTier: PlanTier =
     stored?.tier ??
-    (cfg.deploymentMode === 'saas' ? 'community' : cfg.defaultTier)
+    (cfg.deploymentMode === 'saas' && cfg.licenseEnforcement === 'strict'
+      ? 'community'
+      : cfg.defaultTier)
 
   const now = Date.now()
   const expiresAt = stored?.expiresAt ?? null
@@ -260,7 +262,8 @@ export async function getActivePlan(
 
   const effectiveDef = TIER_CATALOG[effectiveTier]
   const multiTenantEnabled =
-    cfg.deploymentMode === 'saas' && effectiveTier === 'enterprise'
+    cfg.deploymentMode === 'saas' &&
+    (effectiveTier === 'enterprise' || cfg.licenseEnforcement === 'off')
   const features = multiTenantEnabled
     ? effectiveDef.features
     : effectiveDef.features.filter((f) => f !== 'tenants.multi_tenant')

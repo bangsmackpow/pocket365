@@ -20,6 +20,7 @@ import {
   DEFAULT_ORG_ID,
   findOrCreateOrgForEntraTenant,
 } from '~/server/orgs/service'
+import { ensurePrimaryTenantSeeded } from '~/server/tenants/registry'
 import {
   getEffectiveConfigReadiness,
   getEffectiveEntraConfig,
@@ -90,6 +91,7 @@ export const Route = createFileRoute('/api/auth/callback')({
               ownerUpn: identity.upn,
             })
             organizationId = org.id
+            await ensurePrimaryTenantSeeded(org.id)
 
             // Organization creator / owner gets 'owner'; other org members default to configured RBAC or 'admin'
             if (org.ownerUpn.toLowerCase() === identity.upn.toLowerCase()) {
