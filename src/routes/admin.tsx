@@ -185,7 +185,19 @@ function AdminPage() {
       </section>
 
       {/* Microsoft Graph Permissions Readiness */}
-      {permsQuery.data && (
+      {permsQuery.isError ? (
+        <section className="bg-white rounded-xl border border-red-200 shadow-xs p-5 space-y-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-red-900">
+            <ShieldAlert className="h-4 w-4 text-red-600" />
+            Failed to evaluate Microsoft Graph application permissions
+          </div>
+          <p className="text-xs text-red-700 font-mono">
+            {permsQuery.error instanceof Error
+              ? permsQuery.error.message
+              : String(permsQuery.error)}
+          </p>
+        </section>
+      ) : permsQuery.data ? (
         <section className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -263,7 +275,7 @@ function AdminPage() {
             ))}
           </div>
         </section>
-      )}
+      ) : null}
 
       {/* Non-Secret Runtime Settings */}
       <section className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
