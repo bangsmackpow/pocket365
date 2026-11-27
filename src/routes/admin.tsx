@@ -54,6 +54,7 @@ function AdminPage() {
   const [auditRetentionDays, setAuditRetentionDays] = useState(90)
   const [organizationBanner, setOrganizationBanner] = useState('')
   const [bulkJobDelayMs, setBulkJobDelayMs] = useState(150)
+  const [autoRemediateDrift, setAutoRemediateDrift] = useState(false)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
 
   useEffect(() => {
@@ -62,6 +63,7 @@ function AdminPage() {
       setAuditRetentionDays(data.settings.auditRetentionDays)
       setOrganizationBanner(data.settings.organizationBanner)
       setBulkJobDelayMs(data.settings.bulkJobDelayMs)
+      setAutoRemediateDrift(data.settings.autoRemediateDrift ?? false)
     }
   }, [data?.settings])
 
@@ -73,6 +75,7 @@ function AdminPage() {
           auditRetentionDays,
           organizationBanner,
           bulkJobDelayMs,
+          autoRemediateDrift,
         },
       }),
     onSuccess: () => {
@@ -299,6 +302,26 @@ function AdminPage() {
               className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg disabled:bg-slate-50 disabled:text-slate-500"
             />
           </label>
+
+          <div className="pt-3 border-t border-slate-100">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                disabled={!isAdmin}
+                checked={autoRemediateDrift}
+                onChange={(e) => setAutoRemediateDrift(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <div className="space-y-0.5">
+                <span className="text-xs font-semibold text-slate-900 block">
+                  Automated Standards Drift Remediation (CIPP Standards)
+                </span>
+                <span className="text-xs text-slate-500 block">
+                  When enabled, scheduled sweeps will automatically re-harden drifted tenant controls (such as Security Defaults, MFA context, and sharing restrictions) and record an immutable audit trail.
+                </span>
+              </div>
+            </label>
+          </div>
 
           {saveMessage && (
             <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-lg">

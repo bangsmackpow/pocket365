@@ -18,6 +18,9 @@ import { collectCisScan } from '~/server/graph/cis-scanner'
 import { DEFAULT_ORG_ID } from '~/server/orgs/service'
 import { decryptSecret } from '~/server/security/crypto'
 import { assertSafeWebhookUrl } from '~/server/security/ssrf'
+import { recordAuditLog } from '~/server/db/audit'
+import { getRuntimeSettings } from '~/server/db/settings'
+import { executeCisRemediation } from '~/server/graph/cis-remediation'
 
 export interface OutgoingAlert {
   ruleKey: string
@@ -299,7 +302,7 @@ export async function runAutomatedAlertChecks(
     // Skip if Application.Read.All isn't granted
   }
 
-  // 3. CIS Benchmark Regression vs Latest Snapshot
+  // 3. CIS Benchmark Regression vs Latest Snapshot (with optional Standards Drift Auto-Remediation)
   try {
     const latestCis = await db
       .select()
@@ -317,7 +320,59 @@ export async function runAutomatedAlertChecks(
       const regressions = currentScan.checks.filter(
         (c) => prevPassSet.has(c.id) && c.status === 'fail',
       )
+      const runtimeSettings = await getRuntimeSettings()
+
       for (const reg of regressions) {
+        if (runtimeSettings.autoRemediateDrift && reg.remediationId) {
+          try {
+            const { summary } = await executeCisRemediation(graph, reg.remediationId)
+            await recordAuditLog({
+              actorOid: 'system:drift-engine',
+              actorUpn: 'system:drift-engine',
+              actorRole: 'admin',
+              action: `cis.auto_remediate:${reg.remediationId}`,
+              target: 'tenant_policy',
+              status: 'success',
+              details: {
+                cisRef: reg.cisRef,
+                title: reg.title,
+                remediationId: reg.remediationId,
+                summary,
+              },
+            })
+
+            alertsToSend.push({
+              ruleKey: 'cis_auto_remediated',
+              dedupeKey: `cis_auto_remed:${reg.id}:${new Date().toISOString().slice(0, 10)}`,
+              severity: 'info',
+              title: `Auto-Remediated Standards Drift: ${reg.cisRef}`,
+              message: `Control ${reg.cisRef} (${reg.title}) drifted from compliance and was automatically re-hardened: ${summary}`,
+              details: {
+                cisRef: reg.cisRef,
+                title: reg.title,
+                remediationId: reg.remediationId,
+                observed: reg.currentValue,
+                action: summary,
+              },
+            })
+            continue
+          } catch (remediateErr) {
+            await recordAuditLog({
+              actorOid: 'system:drift-engine',
+              actorUpn: 'system:drift-engine',
+              actorRole: 'admin',
+              action: `cis.auto_remediate:${reg.remediationId}`,
+              target: 'tenant_policy',
+              status: 'failure',
+              details: {
+                cisRef: reg.cisRef,
+                remediationId: reg.remediationId,
+                error: remediateErr instanceof Error ? remediateErr.message : String(remediateErr),
+              },
+            })
+          }
+        }
+
         alertsToSend.push({
           ruleKey: 'cis_regression',
           dedupeKey: `cis_regress:${reg.id}`,

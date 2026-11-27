@@ -124,7 +124,12 @@ export default createServerEntry({
         getClientIp(normalizedReq) ||
         'local'
 
-      // 1. Layered Edge Rate Limiting on Auth & API routes (excluding /api/health probe)
+      // 1. Layered Edge Rate Limiting on Auth, API routes & Server Function RPCs
+      const isServerFn =
+        normalizedReq.headers.has('x-tanstack-start-server-fn') ||
+        url.searchParams.has('_serverFn') ||
+        pathname.startsWith('/_server')
+
       if (pathname.startsWith('/api/auth/')) {
         const rl = await checkRateLimitAsync('auth', clientIp)
         if (!rl.allowed) {
@@ -132,6 +137,16 @@ export default createServerEntry({
         }
       } else if (pathname.startsWith('/api/') && pathname !== '/api/health') {
         const rl = await checkRateLimitAsync('api', clientIp)
+        if (!rl.allowed) {
+          return withSecurityHeaders(rateLimitResponse(rl), normalizedReq)
+        }
+      } else if (isServerFn) {
+        const isMutation =
+          normalizedReq.method !== 'GET' && normalizedReq.method !== 'HEAD'
+        const rl = await checkRateLimitAsync(
+          isMutation ? 'mutation' : 'api',
+          clientIp,
+        )
         if (!rl.allowed) {
           return withSecurityHeaders(rateLimitResponse(rl), normalizedReq)
         }

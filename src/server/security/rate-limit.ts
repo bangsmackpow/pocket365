@@ -133,10 +133,34 @@ export async function checkRateLimitAsync(
     ...override,
   }
 
-  if (!getCloudflareEnv().POCKET365_KV) {
-    return limiter.check(`${bucket}:${subjectKey}`, cfg.limit, cfg.windowMs, nowMs)
+  // 1. Local Isolate Fast-Path Check
+  const memResult = limiter.check(
+    `${bucket}:${subjectKey}`,
+    cfg.limit,
+    cfg.windowMs,
+    nowMs,
+  )
+
+  // If already rejected locally in isolate memory, return immediately with 0 KV operations
+  if (!memResult.allowed) {
+    return memResult
   }
 
+  if (!getCloudflareEnv().POCKET365_KV) {
+    return memResult
+  }
+
+  // 2. Cloudflare KV Write Quota Safeguard:
+  // For high-volume buckets ('api' and 'mutation'), as long as the caller has ample remaining
+  // quota (> 25% of the limit), rely on isolate memory to avoid burning daily KV write quotas
+  // and eliminating round-trip latency. We escalate to KV when quota is low (<= 25%) or for
+  // security-sensitive buckets ('auth' and 'heavy').
+  const isHighVolumeBucket = bucket === 'api' || bucket === 'mutation'
+  if (isHighVolumeBucket && memResult.remaining > Math.floor(cfg.limit * 0.25)) {
+    return memResult
+  }
+
+  // 3. Global Edge Synchronization via Cloudflare KV
   const kvKey = `rl:${bucket}:${subjectKey}`
   const cutoff = nowMs - cfg.windowMs
   const stored = (await kvGetJson<number[]>(kvKey)) ?? []

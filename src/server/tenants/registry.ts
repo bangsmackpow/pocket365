@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import { isAdminRole } from '~/server/auth/roles'
-import type { SessionUser } from '~/server/auth/session'
+import { evictSessionCache, type SessionUser } from '~/server/auth/session'
 import { getConfig } from '~/server/config'
 import { getDb } from '~/server/db'
 import {
@@ -192,6 +192,8 @@ export async function setSessionActiveTenant(
       ),
     )
     .run()
+
+  evictSessionCache(session.sessionId)
 
   return target
 }

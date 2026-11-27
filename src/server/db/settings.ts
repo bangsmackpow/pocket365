@@ -7,6 +7,7 @@ export const runtimeSettingsSchema = z.object({
   auditRetentionDays: z.number().int().min(7).max(3650),
   organizationBanner: z.string().max(240),
   bulkJobDelayMs: z.number().int().min(0).max(5000),
+  autoRemediateDrift: z.boolean().default(false),
 })
 
 export type RuntimeSettings = z.infer<typeof runtimeSettingsSchema>
@@ -16,6 +17,7 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = {
   auditRetentionDays: 90,
   organizationBanner: '',
   bulkJobDelayMs: 150,
+  autoRemediateDrift: false,
 }
 
 export async function getRuntimeSettings(): Promise<RuntimeSettings> {

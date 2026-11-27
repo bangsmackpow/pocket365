@@ -7,7 +7,11 @@ import { closeTestDb, initDbForTesting } from '~/server/db/test-d1'
 import { decryptSecret, encryptSecret, isEncryptedValue } from './crypto'
 import { sanitizeCsvCell } from './csv'
 import { verifyCsrfRequest, withSecurityHeaders } from './headers'
-import { checkRateLimit, resetRateLimiterForTests } from './rate-limit'
+import {
+  checkRateLimit,
+  checkRateLimitAsync,
+  resetRateLimiterForTests,
+} from './rate-limit'
 import { assertSafeWebhookUrl, isPrivateOrReservedIp } from './ssrf'
 
 describe('Phase 2 Security Controls', () => {
@@ -45,6 +49,23 @@ describe('Phase 2 Security Controls', () => {
     expect(blocked.retryAfterSeconds).toBeGreaterThan(0)
 
     expect(checkRateLimit('auth', '1.2.3.4', { limit: 2, windowMs: 60_000 }, t0 + 61_000).allowed).toBe(true)
+  })
+
+  it('evaluates checkRateLimitAsync with local isolate memory fast-path', async () => {
+    resetRateLimiterForTests()
+    const t0 = 2_000_000
+    const r1 = await checkRateLimitAsync('api', '10.0.0.99', { limit: 10, windowMs: 60_000 }, t0)
+    expect(r1.allowed).toBe(true)
+    expect(r1.remaining).toBe(9)
+
+    // Fill to limit
+    for (let i = 1; i < 10; i++) {
+      await checkRateLimitAsync('api', '10.0.0.99', { limit: 10, windowMs: 60_000 }, t0 + i * 100)
+    }
+
+    const blocked = await checkRateLimitAsync('api', '10.0.0.99', { limit: 10, windowMs: 60_000 }, t0 + 1500)
+    expect(blocked.allowed).toBe(false)
+    expect(blocked.retryAfterSeconds).toBeGreaterThan(0)
   })
 
   it('encrypts and decrypts secrets with AES-256-GCM and detects tampering', () => {

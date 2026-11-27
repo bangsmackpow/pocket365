@@ -14,6 +14,24 @@ export const SESSION_COOKIE_NAME = 'pocket365_session'
 export const OIDC_COOKIE_NAME = 'pocket365_oidc'
 const LAST_SEEN_UPDATE_INTERVAL_MS = 5 * 60 * 1000
 
+interface CachedSessionEntry {
+  session: SessionUser
+  cachedAt: number
+  lastSeenAt: number
+}
+
+// In-memory session cache (60s TTL) to eliminate repetitive D1 queries
+const sessionMemoryCache = new Map<string, CachedSessionEntry>()
+const SESSION_CACHE_TTL_MS = 60 * 1000
+
+export function evictSessionCache(sessionId?: string): void {
+  if (sessionId) {
+    sessionMemoryCache.delete(sessionId)
+  } else {
+    sessionMemoryCache.clear()
+  }
+}
+
 export interface SessionUser {
   sessionId: string
   organizationId: string
@@ -77,19 +95,27 @@ export async function createSession(params: {
     })
     .run()
 
+  const sessionUser: SessionUser = {
+    sessionId: id,
+    organizationId,
+    oid: params.userOid,
+    upn: params.userUpn,
+    displayName: params.displayName,
+    role: params.role,
+    groups: params.groups,
+    expiresAt,
+    activeTenantId: null,
+  }
+
+  sessionMemoryCache.set(id, {
+    session: sessionUser,
+    cachedAt: now,
+    lastSeenAt: now,
+  })
+
   return {
     rawToken,
-    session: {
-      sessionId: id,
-      organizationId,
-      oid: params.userOid,
-      upn: params.userUpn,
-      displayName: params.displayName,
-      role: params.role,
-      groups: params.groups,
-      expiresAt,
-      activeTenantId: null,
-    },
+    session: sessionUser,
   }
 }
 
@@ -97,15 +123,30 @@ export async function getSessionByRawToken(
   rawToken: string | undefined,
 ): Promise<SessionUser | null> {
   if (!rawToken) return null
-  const db = getDb()
   const id = hashSessionToken(rawToken)
-  const row = await db.select().from(sessions).where(eq(sessions.id, id)).get()
-  if (!row) return null
-
   const now = Date.now()
+
+  // 1. Check in-memory session cache (eliminates repetitive D1 queries)
+  const cached = sessionMemoryCache.get(id)
+  if (cached && now - cached.cachedAt < SESSION_CACHE_TTL_MS) {
+    if (cached.session.expiresAt > now) {
+      return cached.session
+    }
+    sessionMemoryCache.delete(id)
+  }
+
+  // 2. Query D1 database
+  const db = getDb()
+  const row = await db.select().from(sessions).where(eq(sessions.id, id)).get()
+  if (!row) {
+    sessionMemoryCache.delete(id)
+    return null
+  }
+
   const cfg = getConfig()
   const idleLimitMs = cfg.sessionIdleTimeoutMinutes * 60 * 1000
   if (row.expiresAt <= now || now - row.lastSeenAt > idleLimitMs) {
+    sessionMemoryCache.delete(id)
     await db.delete(sessions).where(eq(sessions.id, id)).run()
     return null
   }
@@ -128,7 +169,7 @@ export async function getSessionByRawToken(
     groups = []
   }
 
-  return {
+  const session: SessionUser = {
     sessionId: row.id,
     organizationId: row.organizationId || DEFAULT_ORG_ID,
     oid: row.userOid,
@@ -139,6 +180,14 @@ export async function getSessionByRawToken(
     expiresAt: row.expiresAt,
     activeTenantId: row.activeTenantId ?? null,
   }
+
+  sessionMemoryCache.set(id, {
+    session,
+    cachedAt: now,
+    lastSeenAt: row.lastSeenAt,
+  })
+
+  return session
 }
 
 export async function getSessionFromRequest(
@@ -157,8 +206,9 @@ export async function destroySessionFromRequest(
   const rawToken = cookies[SESSION_COOKIE_NAME]
   if (!rawToken) return null
 
-  const session = await getSessionByRawToken(rawToken)
   const id = hashSessionToken(rawToken)
+  const session = await getSessionByRawToken(rawToken)
+  sessionMemoryCache.delete(id)
   const db = getDb()
   await db.delete(sessions).where(eq(sessions.id, id)).run()
   return session
@@ -201,6 +251,7 @@ export async function revokeSessionById(
   sessionId: string,
   organizationId = DEFAULT_ORG_ID,
 ): Promise<void> {
+  sessionMemoryCache.delete(sessionId)
   const db = getDb()
   await db
     .delete(sessions)
