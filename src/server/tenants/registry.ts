@@ -276,7 +276,7 @@ export function resolveTenantGraphCredentials(
       organizationId,
       entraTenantId: tenant.entraTenantId,
       clientId: tenant.clientId || cfg.graphClientId,
-      clientSecret: cfg.graphClientSecret || undefined,
+      clientSecret: cfg.graphClientSecret || cfg.oidcClientSecret || undefined,
       certThumbprint: cfg.graphCertThumbprint || undefined,
       certPrivateKey: cfg.graphCertPrivateKey || undefined,
     }

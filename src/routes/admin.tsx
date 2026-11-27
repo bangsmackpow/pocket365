@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Cpu,
   Database,
+  ExternalLink,
   HardDrive,
   KeyRound,
   Layers,
@@ -11,6 +12,7 @@ import {
   RefreshCw,
   Save,
   Settings,
+  ShieldAlert,
   Wrench,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -200,6 +202,39 @@ function AdminPage() {
               {permsQuery.data.requirements.length} Granted
             </span>
           </div>
+
+          {/* Admin Consent Alert & 1-Click Action */}
+          {permsQuery.data.requirements.some((r) => !r.granted) && (
+            <div className="p-4 bg-amber-50 border-b border-amber-200 text-amber-900 flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-1">
+                <div className="text-xs font-semibold flex items-center gap-1.5 text-amber-900">
+                  <ShieldAlert className="h-4 w-4 text-amber-600 shrink-0" />
+                  Admin Consent Required in Microsoft Entra ID
+                </div>
+                <div className="text-xs text-amber-800">
+                  {permsQuery.data.error ? (
+                    <span>
+                      Error: <span className="font-mono">{permsQuery.data.error}</span>
+                    </span>
+                  ) : (
+                    'Application permissions require tenant-wide administrator consent before Microsoft Graph grants access.'
+                  )}
+                </div>
+              </div>
+              {permsQuery.data.consentUrl && (
+                <a
+                  href={permsQuery.data.consentUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-600 text-white hover:bg-amber-700 shadow-xs transition-colors shrink-0"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Grant Admin Consent Now
+                </a>
+              )}
+            </div>
+          )}
+
           <div className="divide-y divide-slate-100 max-h-[500px] overflow-y-auto">
             {permsQuery.data.requirements.map((req) => (
               <div

@@ -114,7 +114,9 @@ export function getConfig(): Pocket365Config {
   const viewerEntries = parseCsvList(env('VIEWER_OIDS_OR_GROUPS'))
 
   const graphClientId = (env('GRAPH_CLIENT_ID') || oidcClientId).trim()
-  const graphClientSecret = (env('GRAPH_CLIENT_SECRET') || '').trim()
+  const graphClientSecret = (
+    env('GRAPH_CLIENT_SECRET') || oidcClientSecret
+  ).trim()
   const graphCertThumbprint = (env('GRAPH_CERT_THUMBPRINT') || '')
     .trim()
     .replace(/[:\s]/g, '')

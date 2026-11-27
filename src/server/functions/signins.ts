@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import { requireSession } from '~/server/auth/guards'
-import { getEffectiveConfigReadiness } from '~/server/setup/service'
+import { getConfig } from '~/server/config'
 import { getGraphClient, type GraphSignIn } from '~/server/graph/client'
 import {
   classifyGraphError,
@@ -10,6 +10,8 @@ import {
   type FriendlyGraphError,
   type SignInErrorDiagnosis,
 } from '~/server/graph/signin-errors'
+import { getEffectiveConfigReadiness } from '~/server/setup/service'
+import { resolveActiveTenantForSession } from '~/server/tenants/registry'
 
 export interface EnrichedSignIn extends GraphSignIn {
   diagnosis: SignInErrorDiagnosis
@@ -156,10 +158,24 @@ export const getUserSignInsFn = createServerFn({ method: 'GET' })
 export const getGraphPermissionsStatusFn = createServerFn({
   method: 'GET',
 }).handler(async () => {
-  await requireSession()
+  const session = await requireSession()
+  const cfg = getConfig()
+  const activeTenant = await resolveActiveTenantForSession(session)
+  const tenantId =
+    activeTenant?.entraTenantId || cfg.entraTenantId || 'organizations'
+  const appBase = cfg.appBaseUrl || 'https://pocket365.builtbyvets.app'
+  const redirectUri = `${appBase}/admin`
+  const consentUrl = cfg.graphClientId
+    ? `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/adminconsent?client_id=${encodeURIComponent(cfg.graphClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}`
+    : null
+
   const readiness = await getEffectiveConfigReadiness()
   if (!readiness.graphConfigured) {
     return {
+      tenantId,
+      consentUrl,
+      error:
+        'Microsoft Graph credentials are not configured. Check GRAPH_CLIENT_SECRET or OIDC_CLIENT_SECRET.',
       grantedRoles: [] as string[],
       requirements: POCKET365_GRAPH_PERMISSIONS.map((req) => ({
         ...req,
@@ -173,14 +189,21 @@ export const getGraphPermissionsStatusFn = createServerFn({
     const grantedRoles = await graph.getGrantedRoles()
     const grantedSet = new Set(grantedRoles.map((r) => r.toLowerCase()))
     return {
+      tenantId,
+      consentUrl,
+      error: null,
       grantedRoles,
       requirements: POCKET365_GRAPH_PERMISSIONS.map((req) => ({
         ...req,
         granted: grantedSet.has(req.permission.toLowerCase()),
       })),
     }
-  } catch {
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err)
     return {
+      tenantId,
+      consentUrl,
+      error: errorMsg,
       grantedRoles: [] as string[],
       requirements: POCKET365_GRAPH_PERMISSIONS.map((req) => ({
         ...req,
