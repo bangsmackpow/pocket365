@@ -200,7 +200,7 @@ function AdminPage() {
               </p>
             </div>
             <a
-              href="https://login.microsoftonline.com/organizations/adminconsent?client_id=bd20e25f-9699-4f92-8d30-7631e2f3c3d2&redirect_uri=https://pocket365.builtbyvets.app/admin"
+              href="https://login.microsoftonline.com/organizations/adminconsent?client_id=bd20e25f-9699-4f92-8d30-7631e2f3c3d2&redirect_uri=https://pocket365.builtbyvets.app/api/auth/callback"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 shadow-xs transition-colors shrink-0"

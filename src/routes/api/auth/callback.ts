@@ -61,6 +61,10 @@ export const Route = createFileRoute('/api/auth/callback')({
           )
         }
 
+        if (url.searchParams.get('admin_consent') === 'True') {
+          return redirectWithClearOidc('/admin?consented=true', request)
+        }
+
         const code = url.searchParams.get('code') ?? ''
         const state = url.searchParams.get('state') ?? ''
         const cookies = parseCookies(request.headers.get('cookie'))

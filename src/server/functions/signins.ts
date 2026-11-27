@@ -171,7 +171,7 @@ export const getGraphPermissionsStatusFn = createServerFn({
     const tenantId =
       activeTenant?.entraTenantId || cfg.entraTenantId || 'organizations'
     const appBase = cfg.appBaseUrl || 'https://pocket365.builtbyvets.app'
-    const redirectUri = `${appBase}/admin`
+    const redirectUri = `${appBase}/api/auth/callback`
     const consentUrl = cfg.graphClientId
       ? `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/adminconsent?client_id=${encodeURIComponent(cfg.graphClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}`
       : null
@@ -221,7 +221,7 @@ export const getGraphPermissionsStatusFn = createServerFn({
   } catch (outerErr) {
     const cfg = getConfig()
     const appBase = cfg.appBaseUrl || 'https://pocket365.builtbyvets.app'
-    const redirectUri = `${appBase}/admin`
+    const redirectUri = `${appBase}/api/auth/callback`
     const consentUrl = cfg.graphClientId
       ? `https://login.microsoftonline.com/organizations/adminconsent?client_id=${encodeURIComponent(cfg.graphClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}`
       : null
