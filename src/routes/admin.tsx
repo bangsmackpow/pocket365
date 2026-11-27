@@ -186,16 +186,29 @@ function AdminPage() {
 
       {/* Microsoft Graph Permissions Readiness */}
       {permsQuery.isError ? (
-        <section className="bg-white rounded-xl border border-red-200 shadow-xs p-5 space-y-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-red-900">
-            <ShieldAlert className="h-4 w-4 text-red-600" />
-            Failed to evaluate Microsoft Graph application permissions
+        <section className="bg-white rounded-xl border border-red-200 shadow-xs p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-sm font-semibold text-red-900">
+                <ShieldAlert className="h-4 w-4 text-red-600" />
+                Microsoft Graph Application Permissions Error
+              </div>
+              <p className="text-xs text-red-700 font-mono">
+                {permsQuery.error instanceof Error
+                  ? permsQuery.error.message
+                  : String(permsQuery.error)}
+              </p>
+            </div>
+            <a
+              href="https://login.microsoftonline.com/organizations/adminconsent?client_id=bd20e25f-9699-4f92-8d30-7631e2f3c3d2&redirect_uri=https://pocket365.builtbyvets.app/admin"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 shadow-xs transition-colors shrink-0"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Grant Admin Consent Now
+            </a>
           </div>
-          <p className="text-xs text-red-700 font-mono">
-            {permsQuery.error instanceof Error
-              ? permsQuery.error.message
-              : String(permsQuery.error)}
-          </p>
         </section>
       ) : permsQuery.data ? (
         <section className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
