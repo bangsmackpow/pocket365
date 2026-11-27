@@ -17,6 +17,7 @@ import {
   isWeakMfaOnly,
   normalizeAuthMethod,
   summarizeMfaCoverage,
+  synthesizeUserRegistrationDetail,
   type NormalizedAuthMethod,
 } from '~/server/graph/mfa-helpers'
 import {
@@ -342,6 +343,7 @@ export const getMfaCoverageReportFn = createServerFn({ method: 'GET' })
       const summary = summarizeMfaCoverage(page.items)
       return {
         ok: true as const,
+        isFallback: false,
         users: page.items.map((u) => ({
           ...u,
           weakMfaOnly: isWeakMfaOnly(u),
@@ -351,15 +353,64 @@ export const getMfaCoverageReportFn = createServerFn({ method: 'GET' })
         error: null as FriendlyGraphError | null,
       }
     } catch (err) {
-      return {
-        ok: false as const,
-        users: [] as Array<GraphUserRegistrationDetail & { weakMfaOnly: boolean }>,
-        nextLink: null as string | null,
-        summary: summarizeMfaCoverage([]),
-        error: classifyGraphError(err, [
-          'UserAuthenticationMethod.ReadWrite.All',
-          'AuditLog.Read.All',
-        ]),
+      // Non-Premium Entra ID tenant fallback (Entra ID Free, Business Basic, Business Standard).
+      // When /reports/authenticationMethods/userRegistrationDetails is blocked due to license restrictions,
+      // query users directly and resolve their registered authentication methods via /users/{id}/authentication/methods.
+      try {
+        const [usersPage, roles] = await Promise.all([
+          graph.listUsers({ top: 100 }),
+          graph.listDirectoryRolesWithMembers().catch(() => []),
+        ])
+
+        const adminIds = new Set<string>()
+        for (const role of roles) {
+          for (const member of role.members ?? []) {
+            if (member.id) adminIds.add(member.id)
+          }
+        }
+
+        const userBatch = usersPage.items.slice(0, 100)
+        const userDetails: GraphUserRegistrationDetail[] = []
+
+        for (let i = 0; i < userBatch.length; i += 5) {
+          const chunk = userBatch.slice(i, i + 5)
+          const chunkResults = await Promise.all(
+            chunk.map(async (u) => {
+              try {
+                const methods = await graph.listUserAuthenticationMethods(u.id)
+                return synthesizeUserRegistrationDetail(u, methods, adminIds.has(u.id))
+              } catch {
+                return synthesizeUserRegistrationDetail(u, [], adminIds.has(u.id))
+              }
+            }),
+          )
+          userDetails.push(...chunkResults)
+        }
+
+        const summary = summarizeMfaCoverage(userDetails)
+        return {
+          ok: true as const,
+          isFallback: true,
+          users: userDetails.map((u) => ({
+            ...u,
+            weakMfaOnly: isWeakMfaOnly(u),
+          })),
+          nextLink: null,
+          summary,
+          error: null as FriendlyGraphError | null,
+        }
+      } catch {
+        return {
+          ok: false as const,
+          isFallback: false,
+          users: [] as Array<GraphUserRegistrationDetail & { weakMfaOnly: boolean }>,
+          nextLink: null as string | null,
+          summary: summarizeMfaCoverage([]),
+          error: classifyGraphError(err, [
+            'UserAuthenticationMethod.ReadWrite.All',
+            'AuditLog.Read.All',
+          ]),
+        }
       }
     }
   })

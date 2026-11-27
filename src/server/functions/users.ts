@@ -214,3 +214,74 @@ export const enqueueBulkAssignLicenseFn = createServerFn({ method: 'POST' })
     })
     return { job }
   })
+
+const createUserInputSchema = z.object({
+  displayName: z.string().min(1).max(256),
+  userPrincipalName: z.string().email().max(256),
+  mailNickname: z.string().min(1).max(64),
+  password: z.string().min(8).max(256),
+  forceChangePasswordNextSignIn: z.boolean().default(true),
+  accountEnabled: z.boolean().default(true),
+  givenName: z.string().max(64).optional(),
+  surname: z.string().max(64).optional(),
+  jobTitle: z.string().max(128).optional(),
+  department: z.string().max(128).optional(),
+  usageLocation: z.string().length(2).default('US'),
+})
+
+export const createUserFn = createServerFn({ method: 'POST' })
+  .validator((input: unknown) => createUserInputSchema.parse(input))
+  .handler(async ({ data }) => {
+    const session = await requireRole('admin', undefined, 'user.create')
+    const ipAddress = getClientIp(getRequest())
+    const graph = await getGraphClient()
+
+    try {
+      const newUser = await graph.createUser({
+        displayName: data.displayName,
+        userPrincipalName: data.userPrincipalName,
+        mailNickname: data.mailNickname,
+        password: data.password,
+        forceChangePasswordNextSignIn: data.forceChangePasswordNextSignIn,
+        accountEnabled: data.accountEnabled,
+        givenName: data.givenName,
+        surname: data.surname,
+        jobTitle: data.jobTitle,
+        department: data.department,
+        usageLocation: data.usageLocation,
+      })
+
+      await recordAuditLog({
+        actorOid: session.oid,
+        actorUpn: session.upn,
+        actorRole: session.role,
+        action: 'user.create',
+        target: data.userPrincipalName,
+        status: 'success',
+        details: {
+          userId: newUser.id,
+          userPrincipalName: newUser.userPrincipalName,
+          displayName: newUser.displayName,
+        },
+        ipAddress,
+      })
+
+      return { ok: true, user: newUser }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      await recordAuditLog({
+        actorOid: session.oid,
+        actorUpn: session.upn,
+        actorRole: session.role,
+        action: 'user.create',
+        target: data.userPrincipalName,
+        status: 'failure',
+        details: {
+          userPrincipalName: data.userPrincipalName,
+          error: message,
+        },
+        ipAddress,
+      })
+      throw err
+    }
+  })

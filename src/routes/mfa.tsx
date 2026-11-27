@@ -219,6 +219,16 @@ function MfaReportPage() {
         </div>
       </div>
 
+      {reportQuery.data?.isFallback && (
+        <div className="rounded-xl bg-blue-50 border border-blue-200 p-4 text-xs text-blue-900 flex items-center gap-2.5">
+          <CheckCircle2 className="h-4 w-4 text-blue-600 shrink-0" />
+          <div>
+            <span className="font-semibold">Standard Entra ID Tenant Mode: </span>
+            MFA coverage and registered methods evaluated directly via Microsoft Graph per-user Authentication Methods API (no Entra ID P1/P2 license required).
+          </div>
+        </div>
+      )}
+
       {reportQuery.data && !reportQuery.data.ok && reportQuery.data.error && (
         <div className="rounded-xl bg-amber-50 border border-amber-200 p-5 text-sm text-amber-950 space-y-2">
           <div className="flex items-center gap-2 font-semibold text-amber-900">

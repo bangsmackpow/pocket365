@@ -118,3 +118,59 @@ export function summarizeMfaCoverage(users: GraphUserRegistrationDetail[]) {
     weakMfaOnly,
   }
 }
+
+export function synthesizeUserRegistrationDetail(
+  user: {
+    id: string
+    userPrincipalName: string
+    displayName?: string | null
+    userType?: string | null
+  },
+  methods: GraphAuthMethod[],
+  isAdmin = false,
+): GraphUserRegistrationDetail {
+  const methodsRegistered: string[] = []
+  let isMfaRegistered = false
+  let isPasswordlessCapable = false
+
+  for (const m of methods) {
+    const t = m['@odata.type'] || ''
+    if (t.includes('microsoftAuthenticator')) {
+      methodsRegistered.push('microsoftAuthenticatorPush')
+      isMfaRegistered = true
+    } else if (t.includes('phoneAuthenticationMethod')) {
+      methodsRegistered.push('mobilePhone')
+      isMfaRegistered = true
+    } else if (t.includes('fido2')) {
+      methodsRegistered.push('fido2SecurityKey')
+      isMfaRegistered = true
+      isPasswordlessCapable = true
+    } else if (t.includes('softwareOath')) {
+      methodsRegistered.push('softwareOneTimePasscode')
+      isMfaRegistered = true
+    } else if (t.includes('windowsHello')) {
+      methodsRegistered.push('windowsHelloForBusiness')
+      isMfaRegistered = true
+      isPasswordlessCapable = true
+    } else if (t.includes('emailAuthenticationMethod')) {
+      methodsRegistered.push('email')
+    }
+  }
+
+  return {
+    id: user.id,
+    userPrincipalName: user.userPrincipalName,
+    userDisplayName: user.displayName || user.userPrincipalName,
+    userType: user.userType ?? 'Member',
+    isAdmin,
+    isSsprRegistered: isMfaRegistered,
+    isSsprEnabled: isMfaRegistered,
+    isSsprCapable: isMfaRegistered,
+    isMfaRegistered,
+    isMfaCapable: isMfaRegistered,
+    isPasswordlessCapable,
+    methodsRegistered,
+    userPreferredMethodForSecondaryAuthentication: methodsRegistered[0] ?? null,
+    lastUpdatedDateTime: new Date().toISOString(),
+  }
+}

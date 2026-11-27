@@ -49,7 +49,7 @@ function CisBenchmarksPage() {
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [categoryFilter, setCategoryFilter] = useState<CisCategory | 'all'>('all')
-  const [frameworkView, setFrameworkView] = useState<'all' | 'cis' | 'nist' | 'soc2' | 'iso'>('all')
+  const [frameworkView, setFrameworkView] = useState<'all' | 'cis' | 'nist'>('all')
   const [banner, setBanner] = useState<{
     type: 'success' | 'error'
     text: string
@@ -235,24 +235,6 @@ function CisBenchmarksPage() {
               }`}
             >
               NIST SP 800-171
-            </button>
-            <button
-              type="button"
-              onClick={() => setFrameworkView('soc2')}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                frameworkView === 'soc2' ? 'bg-white text-slate-900 shadow-xs' : 'hover:text-slate-900'
-              }`}
-            >
-              SOC 2 Type II
-            </button>
-            <button
-              type="button"
-              onClick={() => setFrameworkView('iso')}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                frameworkView === 'iso' ? 'bg-white text-slate-900 shadow-xs' : 'hover:text-slate-900'
-              }`}
-            >
-              ISO/IEC 27001
             </button>
           </div>
 
@@ -535,16 +517,6 @@ function CisCheckCard({
             {(frameworkView === 'all' || frameworkView === 'nist') && check.nistRef && (
               <span className="font-mono text-xs font-bold text-slate-700 bg-slate-100 border border-slate-300 px-2 py-0.5 rounded">
                 {check.nistRef}
-              </span>
-            )}
-            {(frameworkView === 'all' || frameworkView === 'soc2') && check.soc2Ref && (
-              <span className="font-mono text-xs font-bold text-cyan-800 bg-cyan-50 border border-cyan-200 px-2 py-0.5 rounded">
-                {check.soc2Ref}
-              </span>
-            )}
-            {(frameworkView === 'all' || frameworkView === 'iso') && check.isoRef && (
-              <span className="font-mono text-xs font-bold text-purple-800 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded">
-                {check.isoRef}
               </span>
             )}
             <span

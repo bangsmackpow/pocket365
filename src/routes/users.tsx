@@ -10,11 +10,14 @@ import {
   ShieldAlert,
   Trash2,
   UserCheck,
+  UserPlus,
   UserX,
+  X,
   XCircle,
 } from 'lucide-react'
 import { useState } from 'react'
 import {
+  createUserFn,
   enqueueBulkAssignLicenseFn,
   enqueueBulkToggleUsersFn,
   getUserDetailFn,
@@ -77,6 +80,51 @@ function UsersPage() {
     type: 'success' | 'error'
     text: string
   } | null>(null)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [newUserData, setNewUserData] = useState({
+    displayName: '',
+    userPrincipalName: '',
+    mailNickname: '',
+    password: '',
+    forceChangePasswordNextSignIn: true,
+    accountEnabled: true,
+    givenName: '',
+    surname: '',
+    jobTitle: '',
+    department: '',
+    usageLocation: 'US',
+  })
+
+  const createUserMutation = useMutation({
+    mutationFn: () => createUserFn({ data: newUserData }),
+    onSuccess: (res) => {
+      setShowCreateModal(false)
+      setFeedback({
+        type: 'success',
+        text: `Created user ${res.user.displayName} (${res.user.userPrincipalName}).`,
+      })
+      setNewUserData({
+        displayName: '',
+        userPrincipalName: '',
+        mailNickname: '',
+        password: '',
+        forceChangePasswordNextSignIn: true,
+        accountEnabled: true,
+        givenName: '',
+        surname: '',
+        jobTitle: '',
+        department: '',
+        usageLocation: 'US',
+      })
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (err) => {
+      setFeedback({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Failed to create user.',
+      })
+    },
+  })
 
   const usersQuery = useQuery({
     queryKey: ['users', appliedSearch, nextLink],
@@ -361,16 +409,28 @@ function UsersPage() {
             365 license assignments.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => usersQuery.refetch()}
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 cursor-pointer"
-        >
-          <RefreshCw
-            className={`h-4 w-4 ${usersQuery.isFetching ? 'animate-spin' : ''}`}
-          />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setShowCreateModal(true)}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer shadow-xs"
+            >
+              <UserPlus className="h-4 w-4" />
+              Create User
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => usersQuery.refetch()}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 cursor-pointer"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${usersQuery.isFetching ? 'animate-spin' : ''}`}
+            />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {feedback && (
@@ -1114,6 +1174,193 @@ function UsersPage() {
           )}
         </aside>
       </div>
+
+      {/* Create User Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <UserPlus className="h-5 w-5 text-indigo-600" />
+                Create New Entra ID User
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                createUserMutation.mutate()
+              }}
+              className="space-y-4"
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="block space-y-1">
+                  <span className="text-xs font-semibold text-slate-700">Display Name *</span>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Jane Doe"
+                    value={newUserData.displayName}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      setNewUserData((prev) => ({
+                        ...prev,
+                        displayName: val,
+                        mailNickname: prev.mailNickname || val.toLowerCase().replace(/\s+/g, ''),
+                      }))
+                    }}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-semibold text-slate-700">User Principal Name (Email) *</span>
+                  <input
+                    type="email"
+                    required
+                    placeholder="jane.doe@yourdomain.com"
+                    value={newUserData.userPrincipalName}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      setNewUserData((prev) => ({
+                        ...prev,
+                        userPrincipalName: val,
+                        mailNickname: prev.mailNickname || val.split('@')[0] || '',
+                      }))
+                    }}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-slate-700">Given Name</span>
+                  <input
+                    type="text"
+                    placeholder="Jane"
+                    value={newUserData.givenName}
+                    onChange={(e) => setNewUserData((prev) => ({ ...prev, givenName: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-slate-700">Surname</span>
+                  <input
+                    type="text"
+                    placeholder="Doe"
+                    value={newUserData.surname}
+                    onChange={(e) => setNewUserData((prev) => ({ ...prev, surname: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </label>
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-700">Initial Password *</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*'
+                      const autoPass = Array.from({ length: 16 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
+                      setNewUserData((prev) => ({ ...prev, password: autoPass }))
+                    }}
+                    className="text-[11px] text-indigo-600 hover:underline font-semibold"
+                  >
+                    Generate Strong Password
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  required
+                  placeholder="Min 8 characters"
+                  value={newUserData.password}
+                  onChange={(e) => setNewUserData((prev) => ({ ...prev, password: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-slate-700">Job Title</span>
+                  <input
+                    type="text"
+                    placeholder="Security Engineer"
+                    value={newUserData.jobTitle}
+                    onChange={(e) => setNewUserData((prev) => ({ ...prev, jobTitle: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-slate-700">Department</span>
+                  <input
+                    type="text"
+                    placeholder="Information Technology"
+                    value={newUserData.department}
+                    onChange={(e) => setNewUserData((prev) => ({ ...prev, department: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </label>
+              </div>
+
+              <div className="space-y-2 pt-1 border-t border-slate-100">
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={newUserData.forceChangePasswordNextSignIn}
+                    onChange={(e) =>
+                      setNewUserData((prev) => ({ ...prev, forceChangePasswordNextSignIn: e.target.checked }))
+                    }
+                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span>Force change password on first sign-in</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={newUserData.accountEnabled}
+                    onChange={(e) => setNewUserData((prev) => ({ ...prev, accountEnabled: e.target.checked }))}
+                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span>Account enabled immediately</span>
+                </label>
+              </div>
+
+              {createUserMutation.isError && (
+                <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 p-3 rounded-lg">
+                  {createUserMutation.error instanceof Error
+                    ? createUserMutation.error.message
+                    : 'Failed to create user in Microsoft Entra ID.'}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="px-4 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={createUserMutation.isPending}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg disabled:opacity-50 cursor-pointer shadow-xs"
+                >
+                  {createUserMutation.isPending ? 'Provisioning...' : 'Create User'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
