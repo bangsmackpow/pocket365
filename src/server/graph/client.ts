@@ -4,6 +4,7 @@ import { getConfig } from '~/server/config'
 import { getDb } from '~/server/db'
 import { organizations } from '~/server/db/schema'
 import { DEFAULT_ORG_ID } from '~/server/orgs/service'
+import { getEffectiveEntraConfig } from '~/server/setup/service'
 import {
   getManagedTenantById,
   resolveActiveTenantForSession,
@@ -1624,7 +1625,7 @@ export async function getGraphClient(
     }
   }
 
-  if (tenantRow && tenantRow.connectionMode !== 'env_primary') {
+  if (tenantRow && tenantRow.entraTenantId) {
     const cacheKey = `${tenantRow.organizationId || orgId}:${tenantRow.id}`
     const cached = tenantClients.get(cacheKey)
     if (cached) return cached
@@ -1635,39 +1636,55 @@ export async function getGraphClient(
     return client
   }
 
-  // Strict Organization Isolation: In SaaS mode or for any non-default organization,
-  // NEVER fall back to the host environment's primary Graph tenant (builtnetworks.com).
+  // If no tenantRow found, check if organization has homeEntraTenantId
+  const db = getDb()
+  const org = await db
+    .select()
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .get()
   const cfg = getConfig()
-  if (cfg.deploymentMode === 'saas' && orgId !== DEFAULT_ORG_ID) {
-    if (tenantRow) {
-      const cacheKey = `${tenantRow.organizationId || orgId}:${tenantRow.id}`
-      const cached = tenantClients.get(cacheKey)
-      if (cached) return cached
-      const creds = resolveTenantGraphCredentials(tenantRow)
-      const provider = new GraphTokenProvider(fetch, creds)
-      const client = new MicrosoftGraphClient({ tokenProvider: provider })
-      tenantClients.set(cacheKey, client)
-      return client
+  if (org && org.homeEntraTenantId) {
+    const creds: TenantGraphCredentials = {
+      organizationId: orgId,
+      entraTenantId: org.homeEntraTenantId,
+      clientId: cfg.graphClientId,
+      clientSecret: cfg.graphClientSecret || cfg.oidcClientSecret || undefined,
+      certThumbprint: cfg.graphCertThumbprint || undefined,
+      certPrivateKey: cfg.graphCertPrivateKey || undefined,
     }
+    const provider = new GraphTokenProvider(fetch, creds)
+    return new MicrosoftGraphClient({ tokenProvider: provider })
+  }
 
-    const db = getDb()
-    const org = await db
-      .select()
-      .from(organizations)
-      .where(eq(organizations.id, orgId))
-      .get()
-    if (org && org.homeEntraTenantId) {
-      const creds: TenantGraphCredentials = {
-        organizationId: orgId,
-        entraTenantId: org.homeEntraTenantId,
-        clientId: cfg.graphClientId,
-        clientSecret: cfg.graphClientSecret || undefined,
-        certThumbprint: cfg.graphCertThumbprint || undefined,
-        certPrivateKey: cfg.graphCertPrivateKey || undefined,
-      }
-      const provider = new GraphTokenProvider(fetch, creds)
-      return new MicrosoftGraphClient({ tokenProvider: provider })
+  // Strict Organization Isolation: In SaaS mode or for non-default org, never fall back to default
+  if (cfg.deploymentMode === 'saas' && orgId !== DEFAULT_ORG_ID) {
+    throw new Error(
+      `No Microsoft Graph tenant configured for organization ${orgId}. Ensure a tenant is connected.`,
+    )
+  }
+
+  // Fallback for default org / self-hosted mode
+  const effective = await getEffectiveEntraConfig()
+  const primaryTenantId = cfg.entraTenantId || effective.entraTenantId
+  if (primaryTenantId) {
+    const creds: TenantGraphCredentials = {
+      organizationId: DEFAULT_ORG_ID,
+      entraTenantId: primaryTenantId,
+      clientId: cfg.graphClientId || effective.graphClientId,
+      clientSecret:
+        cfg.graphClientSecret ||
+        effective.graphClientSecret ||
+        cfg.oidcClientSecret ||
+        effective.oidcClientSecret ||
+        undefined,
+      certThumbprint:
+        cfg.graphCertThumbprint || effective.graphCertThumbprint || undefined,
+      certPrivateKey:
+        cfg.graphCertPrivateKey || effective.graphCertPrivateKey || undefined,
     }
+    const provider = new GraphTokenProvider(fetch, creds)
+    return new MicrosoftGraphClient({ tokenProvider: provider })
   }
 
   if (!defaultClient) {

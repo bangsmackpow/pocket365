@@ -4,7 +4,7 @@ import { getCloudflareEnv } from '~/server/cf/env'
 import { kvDelete, kvGetJson, kvPutJson } from '~/server/cf/kv'
 import { getConfig } from '~/server/config'
 import { decryptSecret, encryptSecret } from '~/server/security/crypto'
-import { getStoredEntraSetup } from '~/server/setup/service'
+import { getEffectiveEntraConfig } from '~/server/setup/service'
 
 interface CachedToken {
   accessToken: string
@@ -80,46 +80,27 @@ export class GraphTokenProvider {
       return this.overrideCredentials
     }
     const cfg = getConfig()
-    if (
-      cfg.entraTenantId &&
-      cfg.graphClientId &&
-      (cfg.graphClientSecret ||
-        (cfg.graphCertThumbprint && cfg.graphCertPrivateKey))
-    ) {
-      return {
-        entraTenantId: cfg.entraTenantId,
-        clientId: cfg.graphClientId,
-        clientSecret: cfg.graphClientSecret,
-        certThumbprint: cfg.graphCertThumbprint,
-        certPrivateKey: cfg.graphCertPrivateKey,
-      }
-    }
-
-    const stored = await getStoredEntraSetup()
-    if (stored && stored.entraTenantId) {
-      const hasCert = Boolean(
-        stored.graphCertThumbprint && stored.graphCertPrivateKeyEnc,
-      )
-      const secretEnc =
-        stored.graphClientSecretEnc ||
-        (!hasCert ? stored.oidcClientSecretEnc : null)
-      return {
-        entraTenantId: stored.entraTenantId,
-        clientId: stored.graphClientId || stored.oidcClientId,
-        clientSecret: secretEnc ? decryptSecret(secretEnc) : undefined,
-        certThumbprint: stored.graphCertThumbprint || undefined,
-        certPrivateKey: stored.graphCertPrivateKeyEnc
-          ? decryptSecret(stored.graphCertPrivateKeyEnc)
-          : undefined,
-      }
-    }
+    const effective = await getEffectiveEntraConfig()
+    const entraTenantId = cfg.entraTenantId || effective.entraTenantId
+    const clientId =
+      cfg.graphClientId || effective.graphClientId || cfg.oidcClientId
+    const clientSecret =
+      cfg.graphClientSecret ||
+      effective.graphClientSecret ||
+      cfg.oidcClientSecret ||
+      effective.oidcClientSecret ||
+      undefined
+    const certThumbprint =
+      cfg.graphCertThumbprint || effective.graphCertThumbprint || undefined
+    const certPrivateKey =
+      cfg.graphCertPrivateKey || effective.graphCertPrivateKey || undefined
 
     return {
-      entraTenantId: cfg.entraTenantId,
-      clientId: cfg.graphClientId,
-      clientSecret: cfg.graphClientSecret,
-      certThumbprint: cfg.graphCertThumbprint,
-      certPrivateKey: cfg.graphCertPrivateKey,
+      entraTenantId,
+      clientId,
+      clientSecret,
+      certThumbprint,
+      certPrivateKey,
     }
   }
 
