@@ -42,7 +42,7 @@ type CleanupFilter =
 
 function StaleCleanupPage() {
   const { auth } = Route.useRouteContext()
-  const isAdmin = auth.user?.role === 'admin'
+  const isAdmin = auth.user?.role === 'admin' || auth.user?.role === 'owner'
 
   const [activeTab, setActiveTab] = useState<'uar' | 'cleanup'>('uar')
   const [staleDays, setStaleDays] = useState(90)

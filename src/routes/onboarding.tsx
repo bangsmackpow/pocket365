@@ -34,7 +34,7 @@ export const Route = createFileRoute('/onboarding')({
 
 function OnboardingPage() {
   const { auth } = Route.useRouteContext()
-  const isAdmin = auth.user?.role === 'admin'
+  const isAdmin = auth.user?.role === 'admin' || auth.user?.role === 'owner'
   const queryClient = useQueryClient()
 
   const [tab, setTab] = useState<'wizard' | 'templates'>('wizard')

@@ -44,7 +44,7 @@ function groupKindLabel(group: {
 
 function GroupsPage() {
   const { auth } = Route.useRouteContext()
-  const isAdmin = auth.user?.role === 'admin'
+  const isAdmin = auth.user?.role === 'admin' || auth.user?.role === 'owner'
   const queryClient = useQueryClient()
 
   const [searchInput, setSearchInput] = useState('')

@@ -49,7 +49,7 @@ function csvCell(val: unknown): string {
 
 function MfaReportPage() {
   const { auth } = Route.useRouteContext()
-  const isAdmin = auth.user?.role === 'admin'
+  const isAdmin = auth.user?.role === 'admin' || auth.user?.role === 'owner'
 
   const [filter, setFilter] = useState<MfaFilter>('all')
   const [search, setSearch] = useState('')

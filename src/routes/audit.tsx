@@ -35,7 +35,7 @@ export const Route = createFileRoute('/audit')({
 
 function AuditAndJobsPage() {
   const { auth } = Route.useRouteContext()
-  const isAdmin = auth.user?.role === 'admin'
+  const isAdmin = auth.user?.role === 'admin' || auth.user?.role === 'owner'
   const queryClient = useQueryClient()
 
   const [tab, setTab] = useState<'audit' | 'directory' | 'jobs'>('audit')

@@ -43,7 +43,7 @@ export const Route = createFileRoute('/posture')({
 
 function SecurityPosturePage() {
   const { auth } = Route.useRouteContext()
-  const isAdmin = auth.user?.role === 'admin'
+  const isAdmin = auth.user?.role === 'admin' || auth.user?.role === 'owner'
   const queryClient = useQueryClient()
 
   const [tab, setTab] = useState<'score' | 'ca' | 'devices' | 'risky'>('score')
