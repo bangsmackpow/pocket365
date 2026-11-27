@@ -1605,6 +1605,7 @@ export async function getGraphClient(
   explicitManagedTenantId?: string,
   explicitOrgId?: string,
 ): Promise<MicrosoftGraphClient> {
+  const effective = await getEffectiveEntraConfig()
   let session = null
   try {
     session = await getCurrentSession()
@@ -1629,7 +1630,7 @@ export async function getGraphClient(
     const cacheKey = `${tenantRow.organizationId || orgId}:${tenantRow.id}`
     const cached = tenantClients.get(cacheKey)
     if (cached) return cached
-    const creds = resolveTenantGraphCredentials(tenantRow)
+    const creds = resolveTenantGraphCredentials(tenantRow, effective)
     const provider = new GraphTokenProvider(fetch, creds)
     const client = new MicrosoftGraphClient({ tokenProvider: provider })
     tenantClients.set(cacheKey, client)
@@ -1648,10 +1649,22 @@ export async function getGraphClient(
     const creds: TenantGraphCredentials = {
       organizationId: orgId,
       entraTenantId: org.homeEntraTenantId,
-      clientId: cfg.graphClientId,
-      clientSecret: cfg.graphClientSecret || cfg.oidcClientSecret || undefined,
-      certThumbprint: cfg.graphCertThumbprint || undefined,
-      certPrivateKey: cfg.graphCertPrivateKey || undefined,
+      clientId:
+        cfg.graphClientId ||
+        effective.graphClientId ||
+        cfg.oidcClientId ||
+        effective.oidcClientId ||
+        '',
+      clientSecret:
+        cfg.graphClientSecret ||
+        effective.graphClientSecret ||
+        cfg.oidcClientSecret ||
+        effective.oidcClientSecret ||
+        undefined,
+      certThumbprint:
+        cfg.graphCertThumbprint || effective.graphCertThumbprint || undefined,
+      certPrivateKey:
+        cfg.graphCertPrivateKey || effective.graphCertPrivateKey || undefined,
     }
     const provider = new GraphTokenProvider(fetch, creds)
     return new MicrosoftGraphClient({ tokenProvider: provider })
@@ -1665,13 +1678,17 @@ export async function getGraphClient(
   }
 
   // Fallback for default org / self-hosted mode
-  const effective = await getEffectiveEntraConfig()
   const primaryTenantId = cfg.entraTenantId || effective.entraTenantId
   if (primaryTenantId) {
     const creds: TenantGraphCredentials = {
       organizationId: DEFAULT_ORG_ID,
       entraTenantId: primaryTenantId,
-      clientId: cfg.graphClientId || effective.graphClientId,
+      clientId:
+        cfg.graphClientId ||
+        effective.graphClientId ||
+        cfg.oidcClientId ||
+        effective.oidcClientId ||
+        '',
       clientSecret:
         cfg.graphClientSecret ||
         effective.graphClientSecret ||

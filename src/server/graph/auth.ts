@@ -83,7 +83,11 @@ export class GraphTokenProvider {
     const effective = await getEffectiveEntraConfig()
     const entraTenantId = cfg.entraTenantId || effective.entraTenantId
     const clientId =
-      cfg.graphClientId || effective.graphClientId || cfg.oidcClientId
+      cfg.graphClientId ||
+      effective.graphClientId ||
+      cfg.oidcClientId ||
+      effective.oidcClientId ||
+      ''
     const clientSecret =
       cfg.graphClientSecret ||
       effective.graphClientSecret ||
@@ -161,8 +165,14 @@ export class GraphTokenProvider {
     const creds = await this.resolveCredentialsAsync()
 
     if (!creds.entraTenantId || !creds.clientId) {
+      const missing: string[] = []
+      if (!creds.entraTenantId) missing.push('ENTRA_TENANT_ID')
+      if (!creds.clientId) missing.push('GRAPH_CLIENT_ID / OIDC_CLIENT_ID')
+      console.error(
+        `[Pocket365 Graph Auth] Authentication failed: missing ${missing.join(' and ')} (tenantId="${creds.entraTenantId || ''}", clientId="${creds.clientId || ''}").`,
+      )
       throw new Error(
-        'Microsoft Graph app-only authentication is not configured (missing ENTRA_TENANT_ID or GRAPH_CLIENT_ID).',
+        `Microsoft Graph app-only authentication is not configured (missing ${missing.join(' or ')}).`,
       )
     }
 
@@ -188,10 +198,17 @@ export class GraphTokenProvider {
     } else if (creds.clientSecret) {
       body.set('client_secret', creds.clientSecret)
     } else {
+      console.error(
+        `[Pocket365 Graph Auth] No client secret or certificate configured for tenant "${creds.entraTenantId}".`,
+      )
       throw new Error(
         'Microsoft Graph credentials missing. Configure GRAPH_CLIENT_SECRET or GRAPH_CERT_THUMBPRINT + GRAPH_CERT_PRIVATE_KEY.',
       )
     }
+
+    console.info(
+      `[Pocket365 Graph Auth] Requesting app token for tenant "${creds.entraTenantId}" with client ID "${creds.clientId}" (hasSecret: ${Boolean(creds.clientSecret)}, hasCert: ${Boolean(creds.certThumbprint)})...`,
+    )
 
     const response = await this.fetchImpl(tokenUrl, {
       method: 'POST',
@@ -207,6 +224,9 @@ export class GraphTokenProvider {
     }
 
     if (!response.ok || !data.access_token) {
+      console.error(
+        `[Pocket365 Graph Auth] Token error for tenant "${creds.entraTenantId}": HTTP ${response.status} - ${data.error || 'unknown_error'}: ${data.error_description || '(no description)'}`,
+      )
       throw new Error(
         data.error_description ||
           data.error ||

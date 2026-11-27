@@ -17,7 +17,10 @@ import type { TenantGraphCredentials } from '~/server/graph/auth'
 import { buildCanonicalUrl } from '~/server/http/proxy'
 import { DEFAULT_ORG_ID } from '~/server/orgs/service'
 import { decryptSecret, encryptSecret } from '~/server/security/crypto'
-import { getEffectiveEntraConfig } from '~/server/setup/service'
+import {
+  getEffectiveEntraConfig,
+  type EffectiveEntraConfig,
+} from '~/server/setup/service'
 
 /**
  * In `self_hosted` mode, ensures the primary tenant configured via ENTRA_TENANT_ID
@@ -29,6 +32,13 @@ export async function ensurePrimaryTenantSeeded(
 ): Promise<ManagedTenantRow | null> {
   const cfg = getConfig()
   const db = getDb()
+  const effective = await getEffectiveEntraConfig()
+  const defaultClientId =
+    cfg.graphClientId ||
+    effective.graphClientId ||
+    cfg.oidcClientId ||
+    effective.oidcClientId ||
+    ''
 
   if (organizationId !== DEFAULT_ORG_ID) {
     const org = await db
@@ -45,6 +55,16 @@ export async function ensurePrimaryTenantSeeded(
       .all()
 
     if (anyExisting.length > 0) {
+      for (const t of anyExisting) {
+        if (!t.clientId && defaultClientId) {
+          await db
+            .update(managedTenants)
+            .set({ clientId: defaultClientId, updatedAt: Date.now() })
+            .where(eq(managedTenants.id, t.id))
+            .run()
+          t.clientId = defaultClientId
+        }
+      }
       return (
         anyExisting.find((t) => t.isPrimary === 1) ||
         anyExisting.find((t) => t.entraTenantId === org.homeEntraTenantId) ||
@@ -64,7 +84,7 @@ export async function ensurePrimaryTenantSeeded(
       displayName: org.name || (domainPart ? domainPart : `Tenant ${org.homeEntraTenantId.slice(0, 8)}`),
       primaryDomain: domainPart || '',
       connectionMode: 'admin_consent',
-      clientId: cfg.graphClientId || '',
+      clientId: defaultClientId,
       clientSecretEnc: null,
       certThumbprint: null,
       certPrivateKeyEnc: null,
@@ -82,7 +102,6 @@ export async function ensurePrimaryTenantSeeded(
     return row
   }
 
-  const effective = await getEffectiveEntraConfig()
   const primaryTenantId = cfg.entraTenantId || effective.entraTenantId
   if (!primaryTenantId) return null
 
@@ -98,6 +117,14 @@ export async function ensurePrimaryTenantSeeded(
     .get()
 
   if (existing) {
+    if (!existing.clientId && defaultClientId) {
+      await db
+        .update(managedTenants)
+        .set({ clientId: defaultClientId, updatedAt: Date.now() })
+        .where(eq(managedTenants.id, existing.id))
+        .run()
+      existing.clientId = defaultClientId
+    }
     return existing
   }
 
@@ -109,7 +136,7 @@ export async function ensurePrimaryTenantSeeded(
     displayName: 'Primary Tenant',
     primaryDomain: '',
     connectionMode: 'env_primary',
-    clientId: cfg.graphClientId || effective.graphClientId || '',
+    clientId: defaultClientId,
     clientSecretEnc: null,
     certThumbprint: null,
     certPrivateKeyEnc: null,
@@ -255,18 +282,36 @@ export async function setSessionActiveTenant(
  */
 export function resolveTenantGraphCredentials(
   tenant: ManagedTenantRow,
+  effective?: Partial<EffectiveEntraConfig>,
 ): TenantGraphCredentials {
   const cfg = getConfig()
   const organizationId = tenant.organizationId || DEFAULT_ORG_ID
+  const fallbackClientId =
+    tenant.clientId ||
+    cfg.graphClientId ||
+    effective?.graphClientId ||
+    cfg.oidcClientId ||
+    effective?.oidcClientId ||
+    ''
+  const fallbackClientSecret =
+    cfg.graphClientSecret ||
+    effective?.graphClientSecret ||
+    cfg.oidcClientSecret ||
+    effective?.oidcClientSecret ||
+    undefined
+  const fallbackCertThumbprint =
+    cfg.graphCertThumbprint || effective?.graphCertThumbprint || undefined
+  const fallbackCertPrivateKey =
+    cfg.graphCertPrivateKey || effective?.graphCertPrivateKey || undefined
 
   if (tenant.connectionMode === 'env_primary') {
     return {
       organizationId,
       entraTenantId: tenant.entraTenantId,
-      clientId: cfg.graphClientId,
-      clientSecret: cfg.graphClientSecret || undefined,
-      certThumbprint: cfg.graphCertThumbprint || undefined,
-      certPrivateKey: cfg.graphCertPrivateKey || undefined,
+      clientId: fallbackClientId,
+      clientSecret: fallbackClientSecret,
+      certThumbprint: fallbackCertThumbprint,
+      certPrivateKey: fallbackCertPrivateKey,
     }
   }
 
@@ -275,10 +320,10 @@ export function resolveTenantGraphCredentials(
     return {
       organizationId,
       entraTenantId: tenant.entraTenantId,
-      clientId: tenant.clientId || cfg.graphClientId,
-      clientSecret: cfg.graphClientSecret || cfg.oidcClientSecret || undefined,
-      certThumbprint: cfg.graphCertThumbprint || undefined,
-      certPrivateKey: cfg.graphCertPrivateKey || undefined,
+      clientId: fallbackClientId,
+      clientSecret: fallbackClientSecret,
+      certThumbprint: fallbackCertThumbprint,
+      certPrivateKey: fallbackCertPrivateKey,
     }
   }
 
@@ -286,14 +331,14 @@ export function resolveTenantGraphCredentials(
   return {
     organizationId,
     entraTenantId: tenant.entraTenantId,
-    clientId: tenant.clientId,
+    clientId: fallbackClientId,
     clientSecret: tenant.clientSecretEnc
       ? decryptSecret(tenant.clientSecretEnc)
-      : undefined,
-    certThumbprint: tenant.certThumbprint || undefined,
+      : fallbackClientSecret,
+    certThumbprint: tenant.certThumbprint || fallbackCertThumbprint,
     certPrivateKey: tenant.certPrivateKeyEnc
       ? decryptSecret(tenant.certPrivateKeyEnc)
-      : undefined,
+      : fallbackCertPrivateKey,
   }
 }
 
@@ -310,6 +355,14 @@ export async function createManagedTenantRecord(params: {
   isPrimary?: boolean
   createdBy: string
 }): Promise<ManagedTenantRow> {
+  const cfg = getConfig()
+  const effective = await getEffectiveEntraConfig()
+  const defaultClientId =
+    cfg.graphClientId ||
+    effective.graphClientId ||
+    cfg.oidcClientId ||
+    effective.oidcClientId ||
+    ''
   const db = getDb()
   const now = Date.now()
   const id = crypto.randomUUID()
@@ -320,7 +373,7 @@ export async function createManagedTenantRecord(params: {
     displayName: params.displayName.trim(),
     primaryDomain: (params.primaryDomain || '').trim(),
     connectionMode: params.connectionMode,
-    clientId: (params.clientId || '').trim(),
+    clientId: (params.clientId || defaultClientId).trim(),
     clientSecretEnc: params.clientSecret
       ? encryptSecret(params.clientSecret.trim())
       : null,
@@ -349,9 +402,16 @@ export async function createAdminConsentRequestUrl(
   organizationId = DEFAULT_ORG_ID,
 ): Promise<{ consentUrl: string; state: string }> {
   const cfg = getConfig()
-  if (!cfg.graphClientId) {
+  const effective = await getEffectiveEntraConfig()
+  const clientId =
+    cfg.graphClientId ||
+    effective.graphClientId ||
+    cfg.oidcClientId ||
+    effective.oidcClientId ||
+    ''
+  if (!clientId) {
     throw new Error(
-      'GRAPH_CLIENT_ID must be configured for Admin Consent onboarding.',
+      'GRAPH_CLIENT_ID or OIDC_CLIENT_ID must be configured for Admin Consent onboarding.',
     )
   }
 
@@ -373,7 +433,7 @@ export async function createAdminConsentRequestUrl(
 
   const redirectUri = buildCanonicalUrl('/api/tenants/consent-callback', request)
   const params = new URLSearchParams({
-    client_id: cfg.graphClientId,
+    client_id: clientId,
     state,
     redirect_uri: redirectUri,
   })

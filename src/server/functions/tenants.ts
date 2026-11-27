@@ -238,6 +238,9 @@ export const testTenantConnectionFn = createServerFn({ method: 'POST' })
 
     const db = getDb()
     const now = Date.now()
+    console.info(
+      `[Pocket365 Tenant Test] Testing connection for tenant "${target.displayName}" (id: ${target.id}, entraTenantId: ${target.entraTenantId}, mode: ${target.connectionMode}, clientId: "${target.clientId}")`,
+    )
     try {
       const client = await getGraphClient(target.id, session.organizationId)
       const org = await client.getOrganization()
@@ -245,6 +248,10 @@ export const testTenantConnectionFn = createServerFn({ method: 'POST' })
         org?.verifiedDomains.find((d) => d.isDefault)?.name ||
         org?.verifiedDomains[0]?.name ||
         target.primaryDomain
+
+      console.info(
+        `[Pocket365 Tenant Test] Successfully connected to tenant "${target.displayName}" (${target.entraTenantId}): verifiedDomain=${primaryDomain}`,
+      )
 
       await db
         .update(managedTenants)
@@ -277,6 +284,9 @@ export const testTenantConnectionFn = createServerFn({ method: 'POST' })
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
+      console.error(
+        `[Pocket365 Tenant Test] Connection test failed for tenant "${target.displayName}" (${target.entraTenantId}): ${msg}`,
+      )
       await db
         .update(managedTenants)
         .set({
