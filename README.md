@@ -1,8 +1,8 @@
 # Pocket365
 
-**Pocket365** (`pocket365`) is a **Cloudflare-native** Microsoft 365 security, compliance, and **multi-tenant MSP** management web application built with **TanStack Start** (TanStack Router, TanStack Query, and Nitro v3 `cloudflare-module`), **Cloudflare Workers**, **D1 (SQLite)** + **Drizzle ORM**, **KV**, **R2**, **Cron Triggers**, **Queues**, and **Microsoft Entra ID OIDC** authentication.
+**Pocket365** (`pocket365`) is a **Cloudflare-native** Microsoft 365 security, compliance, and **multi-tenant MSP** management web application — part of the **[Built by Vets](https://builtbyvets.app)** software suite. Built with **TanStack Start** (TanStack Router, TanStack Query, and Nitro v3 `cloudflare-module`), **Cloudflare Workers**, **D1 (SQLite)** + **Drizzle ORM**, **KV**, **R2**, **Cron Triggers**, **Queues**, and **Microsoft Entra ID OIDC** authentication.
 
-Deploy to **your own Cloudflare account** in `self_hosted` mode (Free single-tenant starter or Pro single-tenant license), or operate as a **multi-tenant MSP SaaS** in `saas` mode using a single deployment flag (`DEPLOYMENT_MODE`).
+Deploy to **your own Cloudflare account** in `self_hosted` mode (Free single-tenant starter or Pro single-tenant license), or operate as a **multi-tenant MSP SaaS** in `saas` mode using a single deployment flag (`DEPLOYMENT_MODE`). Unauthenticated visitors at `/` see the public Pocket365 landing page, while signed-in users go straight to the Dashboard.
 
 ---
 

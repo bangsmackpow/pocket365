@@ -37,7 +37,7 @@ This file documents the architecture, conventions, security invariants, and veri
 - `src/server/billing/` — Commercial tier catalog & server-side `requireEntitlement(...)` (`entitlements.ts`), offline Ed25519-signed license key verification/issuance, and Stripe HMAC-SHA256 webhook verification (`stripe-webhook.ts`).
 - `src/server/tenants/` — Multi-tenant MSP registry (`registry.ts`): primary tenant auto-seeding & D1 auto-healing, AES-256-GCM encrypted per-tenant credentials, fallback credential resolution chain (`resolveTenantGraphCredentials`), 1-click Admin Consent onboarding URLs (`/api/auth/callback` & `/api/tenants/consent-callback`), per-tenant technician access scoping (`tenant_access`), per-session active tenant context, and structured connection test diagnostics (`[Pocket365 Tenant Test]`).
 - `src/server/functions/` — TanStack Start `createServerFn` RPC endpoints. **Important:** Keep `src/server/functions/*.ts` files exporting *only* `createServerFn` functions (and TypeScript types) so Vite's client build cleanly strips all server imports.
-- `src/routes/` — File-based UI pages and raw HTTP API routes (`src/routes/api/`).
+- `src/routes/` — File-based UI pages and raw HTTP API routes (`src/routes/api/`). Unauthenticated visitors at `/` see the public product landing page (`src/components/Pocket365Landing.tsx`, part of the Built by Vets suite at `builtbyvets.app`), while authenticated users land directly on the Dashboard.
 
 ---
 
