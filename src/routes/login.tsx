@@ -147,6 +147,23 @@ function LoginPage() {
               />
             </div>
           </div>
+
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <Link
+              to="/"
+              className="font-medium text-indigo-600 hover:text-indigo-700"
+            >
+              ← Pocket365 Overview
+            </Link>
+            <a
+              href="https://builtbyvets.app"
+              target="_blank"
+              rel="noreferrer"
+              className="hover:text-slate-700"
+            >
+              Part of Built by Vets
+            </a>
+          </div>
         </div>
       </div>
     </div>

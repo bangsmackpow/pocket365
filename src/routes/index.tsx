@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, Link, redirect } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import {
   Activity,
   AlertCircle,
@@ -18,6 +18,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { useState } from 'react'
+import { Pocket365Landing } from '~/components/Pocket365Landing'
 import {
   getDashboardDataFn,
   ignoreActionItemFn,
@@ -27,19 +28,24 @@ import { applyCisRemediationFn } from '~/server/functions/governance'
 import type { CisRemediationId, CisSeverity } from '~/server/graph/cis-benchmarks'
 
 export const Route = createFileRoute('/')({
-  beforeLoad: ({ context, location }) => {
-    if (!context.auth.user) {
-      throw redirect({
-        to: '/login',
-        search: { returnTo: location.pathname },
-      })
-    }
-  },
   head: () => ({
-    meta: [{ title: 'Dashboard — Pocket365' }],
+    meta: [{ title: 'Pocket365 — Microsoft 365 Security & MSP Operations' }],
   }),
-  component: DashboardPage,
+  component: HomeRoute,
 })
+
+function HomeRoute() {
+  const { auth } = Route.useRouteContext()
+  if (!auth.user) {
+    return (
+      <Pocket365Landing
+        deploymentMode={auth.deploymentMode}
+        needsSetup={auth.needsSetup}
+      />
+    )
+  }
+  return <DashboardPage />
+}
 
 type FrameworkMode = 'all' | 'cis' | 'nist'
 type ActionFilterTab = 'actionable' | 'ignored'
